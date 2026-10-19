@@ -1,0 +1,19 @@
+# LaTeX proposal sources and build artifacts (kept out of version control)
+proposal/
+proposal.zip
+*.tex
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+
+# Obsidian UI state (vault content itself is tracked)
+vault/.obsidian/workspace.json
+vault/.obsidian/workspace-mobile.json
+
+# OS / editor noise
+.DS_Store
