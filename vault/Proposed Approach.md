@@ -1,16 +1,19 @@
 ---
 title: Proposed Approach — Three-Arm Comparison
 date: 2026-10-19
+updated: 2026-10-19
 tags:
   - project
   - smai
   - deblurring
   - methods
   - design
+  - implementation
 aliases:
   - Three Arms
   - Method Design
   - Three-Arm Study
+  - Method Inventory
 status: draft
 ---
 
@@ -21,111 +24,154 @@ status: draft
 
 Related: [[Project Idea]] · Proposal PDF: `proposal.pdf`
 
+> [!important] Purpose of this note
+> This is the single source of truth for **what we implement**. Every method below is specified by its objective, solver, prior, what is learned, what is fixed, and its role in the study, so that code written by different people stays comparable.
+
 ---
 
-## 1. The design principle: two independent axes
+## 0. Shared foundation (all methods use these)
 
-Every method in the literature answers two *separate* questions. Keeping them separate is what makes the three-arm design interpretable:
+| Component | Basis |
+|---|---|
+| Forward model | $y = Ax + \varepsilon$, $\varepsilon \sim \mathcal{N}(0,\sigma^2)$ |
+| Operator | $A$ = circular convolution with PSF $k$; diagonalized by FFT: $A = \mathcal{F}^{-1}\mathrm{diag}(\kappa)\mathcal{F}$, $\kappa = \mathcal{F}k$ |
+| PSF library | Gaussian $\sigma_k \in \{0.7, 1.2, 1.6, 2.0\}$; Levin motion kernels; defocus disks |
+| Noise grid | $\sigma \in \{0, 1, 5, 15, 25\}/255$ |
+| Data | BSDS500 splits (200 train / 100 val / 200 test), 128×128 patches, circular boundary |
+| Metrics | PSNR, SSIM, LPIPS, data-consistency residual $\lVert A\hat{x}-y\rVert_2$, kernel-mismatch PSNR drop, PGD stability |
+
+Every method consumes the same degraded pairs and is scored by the same harness. No method gets a different PSF, noise level, boundary condition, or test set.
+
+---
+
+## 1. Design principle: two independent axes
+
+Every method answers two *separate* questions. Keeping them separate is what makes the three-arm design interpretable:
 
 | Axis | Question | Levels |
 |---|---|---|
-| **Physics-awareness** | Does the method consume the blur kernel $k$ and noise level $\sigma$, and enforce $Ax \approx y$? | no (M1) / yes (M2, M3) |
+| **Physics-awareness** | Does the method consume $k$ and $\sigma$ and enforce $Ax \approx y$? | no (M1) / yes (M2, M3) |
 | **Prior depth** | How much structure does the model assume about natural images, and how much does it learn? | fixed (TV) → shallow learned (GMM, K-SVD) → deep learned (CNN) |
 
-A two-arm comparison (data-only CNN vs classical solver) **confounds** these axes: M1 differs from M2 in both physics-awareness *and* prior depth. The third arm fixes that — **M3 is physics-aware like M2 but deep like M1**, so it isolates the two effects.
+A two-arm comparison (data-only CNN vs classical solver) **confounds** these axes. **M3 is physics-aware like M2 but deep like M1**, so it isolates the two effects.
 
-> [!note] Terminology (fixes earlier label drift)
+> [!note] Terminology
 > - **M1** = Modern / data-only. **Never** sees $k$ or $\sigma$.
-> - **M2** = Classical-ML / physics-aware. **FISTA/ADMM solver + EPLL-GMM prior**, given true $k$, $\sigma$.
+> - **M2** = Classical-ML / physics-aware. **Solver + explicit shallow prior**, given true $k$, $\sigma$.
 > - **M3** = Unrolled control / physics-aware. **USRNet** family, given $k$, $\sigma$.
 >
-> USRNet is **not** M1, and LISTA is **not** M2. USRNet and LISTA both belong to the unrolled family (M3).
+> USRNet is **not** M1, and LISTA is **not** M2. Both belong to the unrolled family (M3).
 
 ---
 
 ## 2. M1 — Modern ML, data-only ($A$-agnostic)
 
-Learns a direct mapping $g_\theta(y) \to x$ from (blurry, sharp) pairs. The degradation is implicit in the data; the network must infer blur and noise by itself.
+Learns a direct mapping $g_\theta(y) \to x$ from (blurry, sharp) pairs. The degradation is implicit in the data.
 
-### Algorithms tried
+**Theoretical basis:** supervised regression. With squared loss the optimum is the **conditional mean** $g_\theta(y) \approx \mathbb{E}[x\mid y]$; when the posterior is multimodal (edges, textures), the mean averages modes and produces blur. This is the theoretical failure mode the arm is meant to exhibit.
 
-| Algorithm | Type | Role | What it contributes to the comparison |
+### Algorithms
+
+| Method | Theoretical basis | What is learned | Role |
 |---|---|---|---|
-| **NAFNet** (Chen et al., ECCV 2022) | U-Net + NAFBlocks (SimpleGate, simplified channel attention) | **Primary M1** | Strongest practical data-only baseline; 33.69 dB on GoPro |
-| **DeepDeblur** (Nah et al., CVPR 2017) | Multi-scale CNN with residual blocks | Historical rung | The original kernel-free deblurring network; shows the family's starting point |
-| U-Net regression | Plain encoder–decoder | Minimal baseline (optional) | Establishes how much of the result is "just capacity" |
+| **U-Net** | Hierarchical encoder–decoder with skip connections; multi-scale receptive field; amortized regression | All weights, end-to-end | Minimal baseline |
+| **DeepDeblur** (Nah et al., CVPR 2017) | Multi-scale coarse-to-fine CNN pyramid; residual blocks; kernel-free | All weights | Historical rung |
+| **NAFNet** (Chen et al., ECCV 2022) | U-Net + NAFBlocks: SimpleGate (channel split + elementwise product), simplified channel attention, LayerNorm, no nonlinear activations | All weights | **Primary M1** |
 
 ### Characteristics
 - **Inputs:** $y$ only. No $k$, no $\sigma$.
 - **Inversion:** a single learned forward pass.
 - **Prior:** implicit, distributed across CNN weights.
-- **Training signal:** supervised $\ell_2$ (or $\ell_1$) on pairs; patches sampled from the same PSF/noise grid.
+- **Training signal:** supervised $\ell_2$ (or $\ell_1$) on pairs; patches from the same grid as everyone else.
 - **Inference:** milliseconds per image.
-- **Expected failures:** collapse under kernel mismatch (SRMD, CVPR 2018), hallucination, instability under small perturbations (Antun et al., PNAS 2020; Gandikota et al., ICIP 2022 for deblurring specifically).
-- **Role in the study:** the "data-only" pole. It is the arm against which the value of physics-awareness is measured (M1 vs M3).
+- **Expected failures:** collapse under kernel mismatch (SRMD, CVPR 2018), hallucination, instability under small perturbations (Antun et al., PNAS 2020; Gandikota et al., ICIP 2022 for deblurring).
+- **Role:** the data-only pole; the arm against which the value of physics-awareness is measured (M1 vs M3).
 
 ---
 
 ## 3. M2 — Classical-ML, physics-aware
 
-Solves a MAP inverse problem with an explicit forward model and an explicit, **learned but shallow** image prior. This is the classical-ML family: learning lives in the prior, not in the inversion.
+Solves a MAP inverse problem with an explicit forward model and an explicit, **learned but shallow** prior. Learning lives in the prior, not in the inversion.
 
-### Formulation
+### 3.1 Formulation
+
 $$
-\hat{x} = \arg\min_x \; \tfrac{1}{2}\|Ax - y\|_2^2 + \lambda R(x),
+\hat{x} = \arg\min_x \; \tfrac{1}{2}\lVert Ax - y\rVert_2^2 + \lambda R(x),
 $$
+
 where $A$ is the known convolution operator (FFT, circular boundary) and $R$ is the prior.
 
-### Solvers tried
-| Solver | Role | Notes |
-|---|---|---|
-| **FISTA** (Beck & Teboulle, TIP 2009) | **Primary solver** | Accelerated proximal gradient; the standard TV-deblurring solver |
-| ADMM / HQS | Alternative solver | Required to plug in the EPLL/GMM patch prior (splitting between data and prior) |
-| Wiener filter | Sanity baseline | Closed-form, no prior learning; lower bound on what "correct physics, dumb prior" gives |
-| Richardson–Lucy | Sanity baseline | Classical non-regularized deconvolution; shows noise amplification |
+### 3.2 Solvers (inversion engines)
 
-### Priors tried
-| Prior | Type | Role | Notes |
+| Solver | Theoretical basis | Update principle | Needs |
 |---|---|---|---|
-| **TV** (Rudin–Osher–Fatemi, 1992) | Fixed, hand-crafted | Non-learned limit | Staircase artifacts on texture |
-| **EPLL** — 200-component GMM (Zoran & Weiss, ICCV 2011) | Shallow learned | **Primary M2 prior** | 8×8 patches, DC removed, EM on ~2M BSDS patches; inner step = component selection + Wiener filter |
-| GMM with $K$ components | Shallow learned | **Ablation ladder** | $K \in \{1, 4, 16, 64, 200\}$; $K{=}1$ is the "naive Gaussian" claim |
-| **K-SVD** dictionary (Aharon et al., 2006) | Shallow learned | Optional alternative | Sparse coding prior; time-boxed, drop first if schedule slips |
+| **Wiener** | Linear MMSE under a Gaussian signal prior; Tikhonov regularization | Closed form in Fourier: $\hat{X} = \kappa^* Y / (\lvert\kappa\rvert^2 + \lambda)$ | $k, \sigma$ |
+| **Richardson–Lucy** | Maximum likelihood for Poisson observations; multiplicative EM | $x \leftarrow x \odot A^\top\!\left(y/(Ax)\right)$, normalized | $k$ |
+| **FISTA** (Beck & Teboulle, TIP 2009) | Accelerated proximal gradient; $O(1/k^2)$ convergence | Gradient step on data term + proximal step of $R$ | $k, \sigma$ |
+| **ADMM / HQS** | Variable splitting; alternating closed-form data update + prior prox + dual/penalty update | $x$-step in FFT; $z$-step = prox; $\mu$ update | $k, \sigma$ |
 
-### Characteristics
-- **Inputs:** $y$, **true $k$**, **true $\sigma$**.
-- **Inversion:** iterative optimization (hundreds to thousands of iterations; seconds–minutes per image).
-- **Prior:** explicit and shallow; learned once on clean patches, outside the solver.
-- **Expected failures:** staircase/ringing on natural texture; brittle to wrong kernels (needs correct $k$).
-- **Role in the study:** the "physics but shallow prior" pole. Compared with M3 it isolates prior depth; compared with M1 it isolates physics-awareness.
+### 3.3 Priors (regularizers)
+
+| Prior | Theoretical basis | Prox / inner step | Role |
+|---|---|---|---|
+| **Tikhonov** | Gaussian prior $\lVert x\rVert^2$; quadratic | Linear (Wiener) | Limit case |
+| **TV** (Rudin et al., 1992) | Sparse gradient prior $\lVert\nabla x\rVert_1$; piecewise-constant model | Chambolle dual projection (FISTA) or soft-threshold split (ADMM) | Classical baseline |
+| **EPLL-GMM** (Zoran & Weiss, ICCV 2011) | Patch distribution = mixture of Gaussians; conditional Gaussian ⇒ per-component Wiener filter | Responsibilities $\gamma_k$, pick $\arg\max_k$, apply $(\Sigma_k+\sigma^2 I)^{-1}(\Sigma_k y+\sigma^2\mu_k)$ | **Primary M2** |
+| **GMM with $K$ components** | Same, but $K$ controls prior capacity | Same, $K \in \{1,4,16,64,200\}$ | **Prior-depth ablation** |
+| **K-SVD** (Aharon et al., 2006) | Overcomplete dictionary + sparse coding $\lVert\alpha\rVert_0$; OMP pursuit, SVD dictionary update | Sparse-code prox (OMP/ISTA) inside ADMM | Optional, time-boxed |
 
 > [!tip] Why the GMM prior is the right choice
-> Natural image patch statistics are heavy-tailed and multimodal, so a single Gaussian prior over-smooths. Normalized/local-scale-conditioned patches are approximately Gaussian, and a finite Gaussian mixture captures the multimodal structure — this is exactly the theory behind EPLL and the reason its inner step is a closed-form Wiener filter. The $K$-sweep turns that theory into a measurable rung of the prior-depth axis.
+> Natural image patch statistics are heavy-tailed and multimodal, so a single Gaussian prior over-smooths. Locally normalized patches are approximately Gaussian, and a finite Gaussian mixture captures the multimodal structure — the theory behind EPLL, and the reason its inner step is a closed-form Wiener filter. The $K$-sweep turns that theory into a measurable rung of the prior-depth axis.
+
+### 3.4 Combinations actually run
+
+| Tier | Combination | Purpose |
+|---|---|---|
+| Core | **FISTA + TV** | Non-learned physics-aware baseline |
+| Core | **ADMM/HQS + EPLL (K = 200)** | Primary M2 |
+| Ladder | **ADMM + EPLL, $K \in \{1,4,16,64,200\}$** | Prior-depth ablation ($K{=}1$ = single-Gaussian limit) |
+| Sanity | **Wiener, Richardson–Lucy** | "Correct physics, dumb/no prior" lower bounds |
+| Optional | **ADMM + K-SVD** | Alternative shallow learned prior; drop first if schedule slips |
+
+### 3.5 Characteristics
+- **Inputs:** $y$, **true $k$**, **true $\sigma$**.
+- **Inversion:** iterative optimization (hundreds to thousands of iterations; seconds–minutes/image).
+- **Prior:** explicit and shallow; learned once on clean patches, outside the solver.
+- **Expected failures:** staircase/ringing on natural texture; brittle to wrong kernels.
+- **Role:** the "physics but shallow prior" pole. Compared with M3 it isolates prior depth; compared with M1 it isolates physics-awareness.
 
 ---
 
 ## 4. M3 — Unrolled control, physics-aware (the bridge)
 
-Unrolls a fixed number of iterations of a proximal optimization into a network, keeping the forward operator $A$ inside the loop as a differentiable, closed-form module. Physics stays in; the prior (and sometimes the hyperparameters) become learned.
+Unrolls a fixed number of proximal iterations into a network, keeping $A$ inside the loop as a differentiable closed-form module. They are **fixed-depth approximations of the MAP solver**, not converged solutions.
 
-### Algorithms tried (the unrolling genealogy)
+### 4.1 Algorithms (the unrolling genealogy)
 
-| Rung | Algorithm | What is learned | What stays fixed | Role |
+| Rung | Method | Theoretical basis | What is learned | What stays fixed |
 |---|---|---|---|---|
-| 1 | **LISTA** (Gregor & LeCun, ICML 2010) | Iteration matrices + scalar shrinkage | Linear forward model | Historical rung; ~20× fewer iterations than FISTA at equal error |
-| 2 | **ISTA-Net** (Zhang & Ghanem, CVPR 2018) | CNN analysis/synthesis transforms in the proximal step | Data term | Mid rung; replaces hand-crafted prox with a learned CNN |
-| 3 | **USRNet** (Zhang, Van Gool, Timofte, CVPR 2020) | ResUNet prior + MLP hyperparameters | Closed-form FFT data module | **Primary M3**; 8 iterations, $k$ and $\sigma$ as inputs |
+| 1 | **LISTA** (Gregor & LeCun, ICML 2010) | Unrolled ISTA for sparse coding: $\alpha_{t+1} = S_\theta(W_1 y + W_2\alpha_t)$; ~20× fewer iterations than FISTA at equal error | $W_1, W_2$, threshold | Forward model |
+| 2 | **ISTA-Net** (Zhang & Ghanem, CVPR 2018) | Unrolled ISTA with learned analysis/synthesis transforms $F,\tilde F$; proximal = soft-threshold in the learned domain; symmetry loss $\lVert\tilde F(F(x))-x\rVert^2$ | CNN transforms, step size, thresholds | Data term |
+| 3 | **USRNet** (Zhang, Van Gool, Timofte, CVPR 2020) | HQS unrolling of $\min_x \tfrac12\lVert y-(x\otimes k)\downarrow_s\rVert^2 + \lambda R(x)$; 8 iterations | ResUNet prior + MLP hyperparameters | Closed-form FFT data module |
 
-### Characteristics
+### 4.2 USRNet data step (deblurring, $s=1$)
+
+$$
+x_{t+1} = \mathcal{F}^{-1}\!\left(\frac{\kappa^*\mathcal{F}(y) + \mu_t \mathcal{F}(z_t)}{\lvert\kappa\rvert^2 + \mu_t}\right),
+\qquad
+z_{t+1} = \mathrm{Denoiser}\!\left(x_{t+1};\sqrt{\lambda/\mu_t}\right).
+$$
+
+### 4.3 Characteristics
 - **Inputs:** $y$, **$k$**, **$\sigma$**.
-- **Inversion:** fixed-depth unrolled optimization (8 iterations for USRNet), not a converged solver.
+- **Inversion:** fixed-depth unrolled optimization (8 iterations for USRNet).
 - **Prior:** learned deep CNN, applied inside the loop.
-- **Inference:** feed-forward, ~ms–s depending on depth/backbone.
-- **Why it is the control:** it has M2's physics and M1's deep prior. Any M1–M2 difference can therefore be attributed to physics-awareness or prior depth rather than to both at once.
-- **The genealogy is itself an ablation:** LISTA → ISTA-Net → USRNet isolates the contribution of learned matrices, then a learned proximal transform, then a full denoiser + hyperparameter module.
+- **Inference:** feed-forward, ~ms–s.
+- **Why it is the control:** it has M2's physics and M1's deep prior, so any M1–M2 difference is attributable to physics-awareness or prior depth rather than both at once.
+- **The genealogy is itself an ablation:** LISTA → ISTA-Net → USRNet isolates learned matrices, then a learned proximal transform, then a full denoiser + hyperparameter module.
 
 > [!warning] Implementation caveats
-> - USRNet's released weights are for **super-resolution**. For deblurring, set the scale factor to 1 and **retrain/fine-tune** on the same PSF/noise protocol; do not use SISR weights as-is.
+> - USRNet's released weights are for **super-resolution**. For deblurring, set $s=1$ and **retrain/fine-tune** on the same PSF/noise protocol; do not use SISR weights as-is.
 > - LISTA is designed for sparse coding; adapting it to a convolutional $A$ means unrolling FISTA with learnable step sizes/thresholds — budget it as implementation work, not "off the shelf."
 > - ISTA-Net was designed for compressive sensing; it must be adapted to the convolution forward operator and stated as such.
 
@@ -135,6 +181,8 @@ Unrolls a fixed number of iterations of a proximal optimization into a network, 
 
 | Property | **M1 — Modern (data-only)** | **M2 — Classical-ML (physics-aware)** | **M3 — Unrolled control (physics-aware)** |
 |---|---|---|---|
+| Estimator | Amortized posterior mean | MAP | Fixed-depth MAP approximation |
+| Mathematics | Deep regression | Convex optimization / EM / dictionary learning | Unrolled optimization |
 | Family | Direct deep regression | Iterative solver + learned shallow prior | Deep unfolding |
 | Knows $k$? | No (implicit in data) | Yes (explicit) | Yes (explicit input) |
 | Knows $\sigma$? | No | Yes | Yes |
@@ -144,15 +192,15 @@ Unrolls a fixed number of iterations of a proximal optimization into a network, 
 | Training | End-to-end on $(x,y)$ pairs | Prior learned offline; solver not trained | End-to-end through the unrolled iterations |
 | Inference | ~ms/image | seconds–minutes/image | ~ms–s/image |
 | Expected failure | Kernel mismatch, hallucination, instability | Staircase/ringing; needs correct $k$ | Between the two; still sensitive to unseen kernels |
-| Role in study | Data-only pole | Physics + shallow-prior pole | Bridge / control |
+| Role | Data-only pole | Physics + shallow-prior pole | Bridge / control |
 
 ---
 
 ## 6. Hypotheses, stated over the three arms
 
 - **H1 — Physics-awareness pays off as information degrades.** The M1–M3 gap is small at low noise with the correct kernel and widens with noise, texture complexity, and kernel mismatch. (Mechanism: M3's data module still uses the true $k$, so it degrades gracefully; M1 has nothing to fall back on.)
-- **H2 — Prior depth matters most on texture.** On piecewise-constant content M2 is competitive; on natural texture the deep-prior arms (M1, M3) win. The $K$-sweep in M2 tests the same claim from the classical side.
-- **H3 — A-awareness buys stability.** M1 is unstable under tiny perturbations while the physics-aware arms resist them (Antun et al., PNAS 2020; to be tested in the convolution regime). This is the study's headline result.
+- **H2 — Prior depth matters most on texture.** On piecewise-constant content M2 is competitive; on natural texture the deep-prior arms (M1, M3) win. The $K$-sweep tests the same claim from the classical side.
+- **H3 — A-awareness buys stability.** M1 is unstable under tiny perturbations while the physics-aware arms resist them (Antun et al., PNAS 2020; tested here in the convolution regime). This is the study's headline result.
 
 ---
 
@@ -165,15 +213,13 @@ Unrolls a fixed number of iterations of a proximal optimization into a network, 
 | Noise | $\sigma \in \{0, 1, 5, 15, 25\}/255$ |
 | Boundary | Circular / FFT, stated explicitly |
 | Normalization | Identical across methods; **never** inside the forward model (noise is absolute) |
-| Metrics | PSNR, SSIM, LPIPS; data-consistency residual $\|A\hat{x}-y\|_2$; kernel-mismatch PSNR drop; PGD stability |
+| Metrics | PSNR, SSIM, LPIPS; data-consistency residual $\lVert A\hat{x}-y\rVert_2$; kernel-mismatch PSNR drop; PGD stability |
 | Statistics | Paired Wilcoxon signed-rank; pre-register 1–2 primary endpoints; Holm–Bonferroni for the rest |
 | Reproducibility | Fixed seeds; released protocol |
 
 ---
 
 ## 8. Diagnosis → prescription (the follow-up)
-
-The comparison is designed to produce a *failure signature*, not just a leaderboard:
 
 | Arm | Diagnosed weakness | What a follow-up method would need to fix |
 |---|---|---|
@@ -185,19 +231,70 @@ The comparison is designed to produce a *failure signature*, not just a leaderbo
 
 ---
 
-## 9. Decisions and open risks
+## 9. Optional / stretch (not core)
 
-- [ ] **USRNet retraining for deblurring ($s{=}1$)** — official weights are SISR; plan fine-tuning, not scratch training.
-- [ ] **LISTA adaptation** to convolutional $A$ — allocate implementation time.
-- [ ] **Compute discipline** — do not run all algorithms on the full grid. Core grid: one representative per arm (NAFNet, FISTA+EPLL, USRNet). Genealogy rungs (DeepDeblur, LISTA, ISTA-Net) on a reduced grid only.
-- [ ] **Headline M1 = NAFNet**, not DeepDeblur (2017); use DeepDeblur only as the historical rung.
-- [ ] **K-SVD is optional** — drop first if the schedule slips.
-- [ ] **Multiplicity** — dozens of Wilcoxon tests will manufacture false positives without correction.
-- [ ] **Blind vs non-blind scope** — Tier 1 gives true $k$ to M2/M3; GoPro (Tier 2) is blind, so either add kernel estimation or label it an out-of-protocol stress test.
+| Method | Basis | Why optional |
+|---|---|---|
+| **Deep Image Prior** (Ulyanov et al., CVPR 2018) | Untrained network as implicit prior; early stopping | Per-image optimization, expensive; discussion only |
+| **GSM-scale spatially varying $\lambda$** | Local scale variable $\hat{z}$ estimates local SNR | Follow-up experiment; not needed for the core table |
+| **Patch-GMM-routed experts** | Mixture of experts gated by GMM responsibilities | Future-work proposal, motivated by the comparison |
 
 ---
 
-## 10. References
+## 10. Implementation order (proposed module map)
+
+```
+src/
+  operators/fft_conv.py      # forward/adjoint convolution, PSF apply
+  psf/library.py             # Gaussian / motion / defocus PSF generation
+  data/degrade.py            # y = Ax + noise, circular boundary
+  protocol/splits.py         # BSDS splits, noise grid, PSF grid
+  metrics/                   # PSNR, SSIM, LPIPS, consistency, PGD
+  methods/classical/
+    wiener.py                # sanity baseline
+    rl.py                    # sanity baseline
+    fista_tv.py              # core classical
+    admm_epll.py             # core classical-ML + K-sweep
+    ksvd.py                  # optional
+  methods/direct/
+    unet.py                  # minimal M1
+    deepdeblur.py            # historical M1 (optional)
+    nafnet.py                # primary M1
+  methods/unrolled/
+    lista.py                 # ladder rung 1
+    ista_net.py              # ladder rung 2
+    usrnet.py                # primary M3
+```
+
+Build order:
+
+1. `operators/fft_conv.py` — forward/adjoint, PSF apply.
+2. `psf/library.py` + `data/degrade.py` — PSF generation, noise, dataset.
+3. `metrics/` + `protocol/splits.py` — harness and fixed protocol.
+4. `classical/wiener.py`, `classical/rl.py` — sanity baselines (no training).
+5. `classical/fista_tv.py` — first real baseline.
+6. `classical/admm_epll.py` — GMM training (EM) + ADMM loop; add the $K$-sweep.
+7. `direct/unet.py` → `direct/nafnet.py` — M1.
+8. `unrolled/usrnet.py` — M3; then `lista.py`, `ista_net.py` for the ladder.
+
+After step 6 the study is runnable on CPU, before any GPU training.
+
+---
+
+## 11. Decisions and open risks
+
+- [ ] **Framework** — PyTorch for learned arms; NumPy/SciPy for classical solvers and GMM/EM.
+- [ ] **USRNet retraining for deblurring ($s{=}1$)** — official weights are SISR; plan fine-tuning, not scratch training.
+- [ ] **LISTA adaptation** to convolutional $A$ — allocate implementation time.
+- [ ] **Compute discipline** — do not run all algorithms on the full grid. Core grid: one representative per arm (NAFNet, FISTA+EPLL, USRNet). Genealogy rungs on a reduced grid only.
+- [ ] **Headline M1 = NAFNet**, not DeepDeblur (2017).
+- [ ] **K-SVD is optional** — drop first if the schedule slips.
+- [ ] **Multiplicity** — dozens of Wilcoxon tests will manufacture false positives without correction.
+- [ ] **Blind vs non-blind scope** — Tier 1 gives true $k$ to M2/M3; GoPro is blind, so either add kernel estimation or label it an out-of-protocol stress test.
+
+---
+
+## 12. References
 
 1. Rudin, Osher, Fatemi. *Nonlinear total variation based noise removal algorithms.* Physica D, 1992.
 2. Beck, Teboulle. *Fast gradient-based algorithms for constrained TV denoising and deblurring.* IEEE TIP, 2009.
@@ -222,4 +319,4 @@ The comparison is designed to produce a *failure signature*, not just a leaderbo
 
 ---
 
-Status: draft — design note for the revised proposal. The 3-page proposal keeps the summary; this note is the full method record.
+Status: draft — implementation reference for the three-arm study. The 3-page proposal keeps the summary; this note is the full method record.
