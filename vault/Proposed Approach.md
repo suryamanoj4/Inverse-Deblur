@@ -212,6 +212,17 @@ $$
 | **1 (core)** | **BSDS500** (Arbeláez et al., TPAMI 2011) | 500 images: **200 train / 100 val / 200 test** | Controlled synthetic comparison |
 | **2 (stretch)** | **GoPro** (Nah et al., CVPR 2017) | 3,214 pairs: **2,103 train / 1,111 test**, no kernels | Blind deblurring; out-of-protocol stress test unless kernel estimation is added |
 
+Dataset setup is a single opt-in entry point:
+
+```bash
+python3 scripts/setup_datasets.py --datasets bsds500 --write-protocol
+```
+
+`--datasets` accepts `bsds500`, `gopro`, `levin` (comma-separated); `gopro` and
+`levin` require `--gopro-archive`/`--levin-archive` (or a direct URL) and are
+never downloaded implicitly. `--check` inspects the local layout without
+downloading.
+
 **Not used:** Set5 / Set14 / Urban100 / Kodak (SR benchmarks). DIV2K is allowed only as an optional *data-scale ablation* applied to **all** learned priors.
 
 ### 7.2 Locked preprocessing decisions
@@ -243,6 +254,7 @@ $$
 
 | Step | Module | Status |
 |---|---|---|
+| Data setup | `scripts/setup_datasets.py` | ✅ implemented (opt-in downloads; BSDS500 source verified) |
 | 1 | `operators/fft_conv.py` | ✅ implemented + tested |
 | 2 | `psf/library.py` | ✅ implemented + tested |
 | 3 | `data/degrade.py`, `data/datasets.py`, `protocol/` | ✅ implemented + tested |

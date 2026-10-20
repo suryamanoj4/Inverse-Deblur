@@ -67,6 +67,37 @@ PYTHONPATH=src python3 -m unittest discover -s tests -v
 make test
 ```
 
+## Dataset setup
+
+One entry script downloads only the datasets you select:
+
+```bash
+# Core Tier 1 dataset (BSDS500)
+python3 scripts/setup_datasets.py --datasets bsds500
+
+# Also write the locked protocol manifests
+python3 scripts/setup_datasets.py --datasets bsds500 --write-protocol
+
+# Tier 2 stretch: GoPro (provide a local archive or direct URL)
+python3 scripts/setup_datasets.py --datasets gopro --gopro-archive /path/GoPro.zip
+
+# Optional: official Levin motion kernels (otherwise procedural fallback)
+python3 scripts/setup_datasets.py --datasets levin --levin-archive /path/kernels.zip
+
+# Inspect the local layout without downloading
+python3 scripts/setup_datasets.py --check --datasets bsds500,gopro,levin
+```
+
+- **BSDS500** is fetched from the official Berkeley archive
+  (`.../grouping/BSR/BSR_bsds500.tgz`).
+- **GoPro** is manual; the official page is
+  <https://seungjunnah.github.io/Datasets/gopro.html>. Pass a local archive or
+  a direct URL.
+- **Levin kernels** are optional; the PSF library falls back to procedural
+  motion kernels if they are absent.
+- `--dry-run` prints the plan and downloads nothing; `--check` only inspects.
+- Protocol manifests are written to `artifacts/protocol/`.
+
 ## Running the classical arm
 
 Train the EPLL Gaussian-mixture prior on BSDS500 train images:
