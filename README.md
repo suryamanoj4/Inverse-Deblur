@@ -49,6 +49,9 @@ M3 is the control that separates two otherwise confounded axes: **physics-awaren
 │   ├── protocol/        # locked config, splits, manifests
 │   └── metrics/         # PSNR, SSIM, LPIPS (optional), data consistency
 ├── tests/               # unittest suite
+├── scripts/
+│   ├── train_gmm.py     # fit the EPLL/GMM prior on BSDS500 train
+│   └── run_classical.py # run all M2 methods and report metrics
 └── vault/               # design notes (Obsidian)
     ├── Project Overview.md
     └── Proposed Approach.md
@@ -64,9 +67,32 @@ PYTHONPATH=src python3 -m unittest discover -s tests -v
 make test
 ```
 
+## Running the classical arm
+
+Train the EPLL Gaussian-mixture prior on BSDS500 train images:
+
+```bash
+PYTHONPATH=src python3 scripts/train_gmm.py --data-root /path/to/BSDS500 \
+  --components 200 --patches 100000 --iters 20 --out checkpoints/epll_gmm.npz
+```
+
+Run all M2 methods on one image (or the built-in synthetic target):
+
+```bash
+PYTHONPATH=src python3 scripts/run_classical.py \
+  --image photo.png --psf gaussian_sigma1.2 --sigma-over-255 15 \
+  --gmm checkpoints/epll_gmm.npz
+```
+
+The script reports PSNR, SSIM and the data-consistency residual for Wiener,
+Richardson–Lucy, FISTA-TV and ADMM-EPLL.
+
 ## Status
 
-Shared foundation implemented and tested: FFT operator (forward + adjoint), PSF library, synthetic degradation, BSDS500 splits, metrics. Next: the classical arm (Wiener, Richardson–Lucy, FISTA-TV, ADMM-EPLL).
+The shared foundation and the M2 classical arm are implemented and tested:
+FFT operator, PSF library, degradation pipeline, splits, metrics, Wiener,
+Richardson–Lucy, FISTA-TV, EPLL/GMM training and ADMM-EPLL. Next: validation
+runs on BSDS500, then the M1 (direct CNN) and M3 (unrolled) arms.
 
 ## References
 

@@ -247,8 +247,8 @@ $$
 | 2 | `psf/library.py` | ✅ implemented + tested |
 | 3 | `data/degrade.py`, `data/datasets.py`, `protocol/` | ✅ implemented + tested |
 | 3 | `metrics/` (PSNR, SSIM, consistency) | ✅ implemented + tested; LPIPS optional |
-| 4–6 | classical baselines | ⏳ next |
-| 7–8 | direct + unrolled arms | ⏳ after protocol lock |
+| 4–6 | classical arm (`wiener`, `richardson_lucy`, `fista_tv`, `admm_epll`, `gmm`) | ✅ implemented + tested |
+| 7–8 | direct + unrolled arms | ⏳ next |
 
 ---
 
