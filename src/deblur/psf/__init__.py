@@ -6,6 +6,7 @@ from .library import (
     gaussian_kernel,
     load_levin_kernels,
     motion_kernel,
+    protocol_psf_sets,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "gaussian_kernel",
     "load_levin_kernels",
     "motion_kernel",
+    "protocol_psf_sets",
 ]

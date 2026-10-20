@@ -7,6 +7,7 @@ training. ``standard_splits`` expects the BSDS500 directory layout.
 from __future__ import annotations
 
 import json
+import random
 from itertools import combinations
 from pathlib import Path
 
@@ -27,6 +28,25 @@ def check_disjoint(splits: dict[str, list[Path]]) -> None:
         if overlap:
             example = sorted(overlap)[0]
             raise ValueError(f"splits {a!r} and {b!r} overlap (e.g. {example})")
+
+
+def validation_subset(
+    paths: list[Path] | list[str],
+    size: int = 10,
+    seed: int = 0,
+) -> list[Path]:
+    """Deterministic checkpoint-selection subset drawn from the sorted val list.
+
+    The same ``(paths, size, seed)`` always yields the same images, so the
+    subset can be pre-registered and logged with the protocol manifest.
+    """
+    ordered = sorted(Path(p) for p in paths)
+    if size <= 0:
+        raise ValueError("size must be positive")
+    if size > len(ordered):
+        raise ValueError(f"requested {size} validation images but only {len(ordered)} exist")
+    rng = random.Random(seed)
+    return sorted(rng.sample(ordered, size))
 
 
 def manifest(splits: dict[str, list[Path]], root: str | Path | None = None) -> dict[str, list[str]]:

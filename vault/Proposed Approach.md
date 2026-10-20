@@ -77,13 +77,24 @@ Learns a direct mapping $g_\theta(y) \to x$ from (blurry, sharp) pairs. The degr
 | **DeepDeblur** (Nah et al., CVPR 2017) | Multi-scale coarse-to-fine CNN pyramid; residual blocks; kernel-free | All weights | Historical rung |
 | **NAFNet** (Chen et al., ECCV 2022) | U-Net + NAFBlocks: SimpleGate (channel split + elementwise product), simplified channel attention, LayerNorm, no nonlinear activations | All weights | **Primary M1** |
 
+### PSF sets (locked)
+
+| Set | Membership | Count | Use |
+|---|---|---|---|
+| **$P_1$** | Gaussian $\sigma_k\in\{0.7,1.2,1.6,2.0\}$; motion length $\{9,15\}$ px $\times$ angle $\{0,45,90,135\}^\circ$ | 4 + 8 = **12** | Training and in-distribution evaluation |
+| **$P_2$-interp** | Gaussian $\sigma_k\in\{0.9,1.4,1.8\}$; motion length $\{12,18\}$ px $\times$ angle $\{22.5,67.5,112.5,157.5\}^\circ$ | 3 + 8 = **11** | Kernel mismatch, same families, unseen parameters |
+| **$P_2$-extrap** | Defocus disks, radii $\{3,5,7,9\}$ px | **4** | Kernel mismatch, unseen family |
+
+The sets are disjoint by name and parameter. Defocus is deliberately absent from $P_1$: it is the unseen-family test. The general PSF library (16 kernels) remains available for other experiments, but the protocol uses these sets.
+
 ### Training regime (locked)
 
-- **One model for the whole training grid.** M1 is trained once on all PSFs in $P_1$ and all noise levels, and receives no $k$ or $\sigma$ at train or test time. This matches M3, which is also a single model across the grid (with $k,\sigma$ as inputs), so the comparison is about the family rather than the number of models.
-- **Condition-balanced sampling.** Each batch samples a PSF from $P_1$ and a noise level from the grid; conditions are balanced across an epoch.
-- **Validation.** Checkpoint selection uses BSDS500 val, averaged over the same grid; the rule is pre-registered.
-- **Kernel-mismatch protocol.** Train on $P_1$, evaluate on $P_2$ with the same noise grid. M1 never sees the test kernel — that is what the experiment measures.
-- **Ablation, not M1.** A per-noise-level oracle (five models, same PSF set) quantifies how much of the M1–M3 gap is due to not knowing $\sigma$. Per-PSF oracles are out of scope (16+ models, compute cost).
+- **One model for the whole training grid.** M1 is trained once on $P_1$ $\times$ all noise levels and receives no $k$ or $\sigma$ at train or test time. M3 is also a single model across the grid (with $k,\sigma$ as inputs), so the comparison is family-vs-family, not model-count-vs-model-count.
+- **Sampling.** Each training patch draws $k \sim \mathrm{Uniform}(P_1)$ and $\sigma \sim \mathrm{Uniform}(\{0,1,5,15,25\}/255)$ independently. All $12 \times 5 = 60$ cells have equal expected weight; $\sigma=0$ is 20% of training; motion is $8/12$ of kernel draws and Gaussian $4/12$. No family rebalancing in the primary run; `family_balanced` is reserved for a sensitivity check.
+- **Checkpoint rule.** One checkpoint per learned arm: highest mean PSNR over the fixed 60-cell grid on a pre-registered 10-image subset of the sorted BSDS500-val list (drawn with seed 0 by `validation_subset`; the image IDs are written to `val_subset.json`). No per-condition checkpoint selection. The same rule applies to M3; the per-$\sigma$ ablation is the only exception.
+- **Kernel mismatch.** Train on $P_1$, evaluate on $P_2$-interp and $P_2$-extrap with the same noise grid. M1 never sees the test kernels.
+- **Ablation, not M1.** The per-noise oracle is five models fine-tuned from the primary M1 checkpoint (10k iterations each, same PSFs); it measures how much of the gap is due to not knowing $\sigma$. Per-PSF oracles are out of scope: 12 models if $\sigma$ is shared, 60 if per-$(k,\sigma)$.
+- **Hyperparameters.** AdamW ($\beta=(0.9,0.999)$, weight decay $10^{-4}$), L2 loss, M1 batch 16 / M3 batch 8 at $128^2$, M1 lr $2\times10^{-4}$ / M3 lr $10^{-4}$, 1k warmup + cosine decay, gradient clipping 1.0, M1 40k / M3 30k iterations maximum, validation every 2k, early stopping patience 4.
 
 ### Characteristics
 - **Inputs:** $y$ only. No $k$, no $\sigma$.
@@ -147,6 +158,13 @@ where $A$ is the known convolution operator (FFT, circular boundary) and $R$ is 
 - **Expected failures:** staircase/ringing on natural texture; brittle to wrong kernels.
 - **Role:** the "physics but shallow prior" pole. Compared with M3 it isolates prior depth; compared with M1 it isolates physics-awareness.
 
+### 3.6 Training and tuning (locked)
+
+- **GMM prior.** Trained once on clean BSDS500 **train** patches ($8\times8$, DC removed, $K$ components, EM). It never sees degraded images; $\sigma$ enters only at inference through the MAP denoiser. The prior is fixed across runs and is not tuned on val or test.
+- **TV weight $\lambda$.** Tuned per noise level on BSDS500 val (five scalars) from a fixed grid; the selected values are logged. This is condition-specific hyperparameter selection and is declared.
+- **EPLL weight $\lambda$.** Tuned per noise level on val, initialized at $\lambda=\max(\sigma^2,10^{-6})\beta_{\max}$; the GMM prior itself is not retrained.
+- **No checkpoint selection.** M2 solves each image independently; solver and hyperparameters are fixed after val tuning. Test images are never used for tuning.
+
 ---
 
 ## 4. M3 — Unrolled control, physics-aware (the bridge)
@@ -169,7 +187,14 @@ x_{t+1} = \mathcal{F}^{-1}\!\left(\frac{\kappa^*\mathcal{F}(y) + \mu_t \mathcal{
 z_{t+1} = \mathrm{Denoiser}\!\left(x_{t+1};\sqrt{\lambda/\mu_t}\right).
 $$
 
-### 4.3 Characteristics
+### 4.3 Training regime (locked)
+
+- One model across $P_1 \times$ all noise levels, with $k$ and $\sigma$ as inputs.
+- Same checkpoint rule as M1: mean val PSNR over the fixed 60-cell grid on the 10-image subset; no per-condition selection.
+- AdamW, L2 loss, batch 8, lr $10^{-4}$, 1k warmup + cosine, gradient clipping 1.0, 30k iterations maximum, validation every 2k, early stopping patience 4.
+- If training from scratch exceeds the GPU budget, initialise from the official USRNet SISR checkpoint and fine-tune for 10k iterations; log this as a documented deviation.
+
+### 4.4 Characteristics
 - **Inputs:** $y$, **$k$**, **$\sigma$**.
 - **Inversion:** fixed-depth unrolled optimization (8 iterations for USRNet).
 - **Prior:** learned deep CNN, applied inside the loop.
@@ -229,7 +254,8 @@ python3 scripts/setup_datasets.py --datasets bsds500 --write-protocol
 `--datasets` accepts `bsds500`, `gopro`, `levin` (comma-separated); `gopro` and
 `levin` require `--gopro-archive`/`--levin-archive` (or a direct URL) and are
 never downloaded implicitly. `--check` inspects the local layout without
-downloading.
+downloading. `protocol.json` / `manifest.json` record the $P_1$/$P_2$
+membership, sampling policy, checkpoint rule, and learned-arm hyperparameters.
 
 **Not used:** Set5 / Set14 / Urban100 / Kodak (SR benchmarks). DIV2K is allowed only as an optional *data-scale ablation* applied to **all** learned priors.
 
@@ -263,6 +289,7 @@ downloading.
 | Step | Module | Status |
 |---|---|---|
 | Data setup | `scripts/setup_datasets.py` | ✅ implemented (opt-in downloads; BSDS500 source verified) |
+| Protocol fields | `protocol/config.py` manifest (PSF sets, sampling, checkpoint, hyperparameters) | ✅ implemented + tested |
 | 1 | `operators/fft_conv.py` | ✅ implemented + tested |
 | 2 | `psf/library.py` | ✅ implemented + tested |
 | 3 | `data/degrade.py`, `data/datasets.py`, `protocol/` | ✅ implemented + tested |

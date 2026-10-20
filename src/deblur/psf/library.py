@@ -158,6 +158,67 @@ def load_levin_kernels(directory: str | Path) -> list[PSF]:
     ]
 
 
+def protocol_psf_sets(
+    *,
+    train_gaussian_sigmas: tuple[float, ...] = (0.7, 1.2, 1.6, 2.0),
+    interp_gaussian_sigmas: tuple[float, ...] = (0.9, 1.4, 1.8),
+    train_motion_lengths: tuple[float, ...] = (9.0, 15.0),
+    train_motion_angles: tuple[float, ...] = (0.0, 45.0, 90.0, 135.0),
+    interp_motion_lengths: tuple[float, ...] = (12.0, 18.0),
+    interp_motion_angles: tuple[float, ...] = (22.5, 67.5, 112.5, 157.5),
+    extrap_defocus_radii: tuple[float, ...] = (3.0, 5.0, 7.0, 9.0),
+    thickness: float = 1.5,
+) -> dict[str, list[PSF]]:
+    """Locked P1 / P2 kernel sets for the controlled protocol.
+
+    P1 (training, 12 kernels): 4 Gaussian + 8 motion.
+    P2-interp (11): unseen parameters of the same families.
+    P2-extrap (4): defocus disks, a family absent from training.
+
+    The three sets are disjoint by construction (different names and
+    parameters). P2-interp tests interpolation within seen families;
+    P2-extrap tests extrapolation to an unseen family.
+    """
+    p1: list[PSF] = [
+        PSF(name=f"gaussian_sigma{sigma:g}", kernel=gaussian_kernel(sigma), kind="gaussian")
+        for sigma in train_gaussian_sigmas
+    ]
+    p1 += [
+        PSF(
+            name=f"motion_l{length:g}_a{angle:g}",
+            kernel=motion_kernel(length, angle, thickness=thickness),
+            kind="motion",
+        )
+        for length in train_motion_lengths
+        for angle in train_motion_angles
+    ]
+
+    p2_interp: list[PSF] = [
+        PSF(name=f"gaussian_sigma{sigma:g}", kernel=gaussian_kernel(sigma), kind="gaussian")
+        for sigma in interp_gaussian_sigmas
+    ]
+    p2_interp += [
+        PSF(
+            name=f"motion_l{length:g}_a{angle:g}",
+            kernel=motion_kernel(length, angle, thickness=thickness),
+            kind="motion",
+        )
+        for length in interp_motion_lengths
+        for angle in interp_motion_angles
+    ]
+
+    p2_extrap: list[PSF] = [
+        PSF(name=f"defocus_r{radius:g}", kernel=disk_kernel(radius), kind="defocus")
+        for radius in extrap_defocus_radii
+    ]
+
+    sets = {"P1": p1, "P2_interp": p2_interp, "P2_extrap": p2_extrap}
+    names = [psf.name for kernels in sets.values() for psf in kernels]
+    if len(names) != len(set(names)):
+        raise ValueError("PSF protocol sets contain duplicate names")
+    return sets
+
+
 def build_psf_library(
     gaussian_sigmas: tuple[float, ...] = (0.7, 1.2, 1.6, 2.0),
     defocus_radii: tuple[float, ...] = (3.0, 5.0, 7.0, 9.0),

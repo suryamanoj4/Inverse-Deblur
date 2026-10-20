@@ -11,6 +11,7 @@ from deblur.psf.library import (
     gaussian_kernel,
     load_levin_kernels,
     motion_kernel,
+    protocol_psf_sets,
 )
 
 
@@ -44,6 +45,27 @@ class TestKernels(unittest.TestCase):
             disk_kernel(-1.0)
         with self.assertRaises(ValueError):
             motion_kernel(0.0, 0.0)
+
+
+class TestProtocolSets(unittest.TestCase):
+    def test_membership_and_counts(self):
+        sets = protocol_psf_sets()
+        self.assertEqual(set(sets), {"P1", "P2_interp", "P2_extrap"})
+        self.assertEqual(len(sets["P1"]), 12)
+        self.assertEqual(len(sets["P2_interp"]), 11)
+        self.assertEqual(len(sets["P2_extrap"]), 4)
+        self.assertEqual({psf.kind for psf in sets["P1"]}, {"gaussian", "motion"})
+        self.assertEqual({psf.kind for psf in sets["P2_interp"]}, {"gaussian", "motion"})
+        self.assertEqual({psf.kind for psf in sets["P2_extrap"]}, {"defocus"})
+
+    def test_sets_are_disjoint_by_name(self):
+        names = [psf.name for kernels in protocol_psf_sets().values() for psf in kernels]
+        self.assertEqual(len(names), len(set(names)))
+
+    def test_all_normalised(self):
+        for kernels in protocol_psf_sets().values():
+            for psf in kernels:
+                self.assertAlmostEqual(float(psf.kernel.sum()), 1.0, places=12)
 
 
 class TestLibrary(unittest.TestCase):

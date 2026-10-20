@@ -181,8 +181,14 @@ def setup_manual(
 
 def write_protocol(image_root: Path, destination: Path, args: argparse.Namespace) -> None:
     sys.path.insert(0, str(ROOT / "src"))
-    from deblur.protocol import ProtocolConfig, check_disjoint, manifest, standard_splits
-    from deblur.psf import build_psf_library
+    from deblur.protocol import (
+        ProtocolConfig,
+        check_disjoint,
+        manifest,
+        standard_splits,
+        validation_subset,
+    )
+    from deblur.psf import protocol_psf_sets
 
     splits = standard_splits(image_root)
     check_disjoint(splits)
@@ -194,32 +200,48 @@ def write_protocol(image_root: Path, destination: Path, args: argparse.Namespace
         levin_dir=str(levin_dir) if kernel_files(levin_dir) else None,
         seed=args.seed,
         eval_crop=args.eval_crop,
+        val_subset_size=args.val_subset_size,
+        val_subset_seed=args.val_subset_seed,
     )
-    psfs = build_psf_library(levin_dir=config.levin_dir)
+    val_subset = validation_subset(
+        splits["val"], size=config.val_subset_size, seed=config.val_subset_seed
+    )
+    val_entries = [
+        path.resolve().relative_to(image_root.resolve()).as_posix() for path in val_subset
+    ]
+    psf_sets = protocol_psf_sets()
+    psf_entries = {
+        name: [
+            {"name": psf.name, "kind": psf.kind, "shape": list(psf.kernel.shape)}
+            for psf in kernels
+        ]
+        for name, kernels in psf_sets.items()
+    }
 
     out_dir = Path(args.protocol_out)
     out_dir.mkdir(parents=True, exist_ok=True)
     split_entries = manifest(splits, root=image_root)
-    psf_entries = [
-        {"name": psf.name, "kind": psf.kind, "shape": list(psf.kernel.shape)}
-        for psf in psfs
-    ]
     combined = {
         "image_root": str(image_root),
         "protocol": config.manifest(),
         "splits": split_entries,
-        "psfs": psf_entries,
+        "validation_subset": val_entries,
+        "psf_sets": psf_entries,
     }
     (out_dir / "splits.json").write_text(json.dumps(split_entries, indent=2))
     (out_dir / "protocol.json").write_text(json.dumps(config.manifest(), indent=2))
+    (out_dir / "val_subset.json").write_text(json.dumps(val_entries, indent=2))
     (out_dir / "psfs.json").write_text(json.dumps(psf_entries, indent=2))
     (out_dir / "manifest.json").write_text(json.dumps(combined, indent=2))
 
     print("protocol written:")
     for split in ("train", "val", "test"):
         print(f"  {split:5s}: {counts[split]:4d} images")
-    print(f"  PSFs: {len(psfs)} kernels")
+    print(f"  validation subset: {len(val_entries)} images (seed {config.val_subset_seed})")
+    for name, entries in psf_entries.items():
+        print(f"  {name}: {len(entries)} kernels")
     print(f"  noise levels: {config.noise_levels_over_255} / 255")
+    print(f"  M1 regime: {config.m1_regime}; checkpoint rule: {config.checkpoint_rule}")
     print(f"  output: {out_dir}")
 
 
@@ -244,6 +266,8 @@ def main() -> int:
     parser.add_argument("--protocol-out", default="artifacts/protocol")
     parser.add_argument("--patch-size", type=int, default=128)
     parser.add_argument("--eval-crop", type=int, default=256)
+    parser.add_argument("--val-subset-size", type=int, default=10)
+    parser.add_argument("--val-subset-seed", type=int, default=0)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 

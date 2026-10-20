@@ -49,6 +49,8 @@ Three arms, one protocol:
 
 M3 is the control: it is physics-aware like M2 and deep like M1, so the three-arm design separates the two axes instead of confounding them. The full specification — objectives, solver/prior matrix, and implementation order — is in [[Proposed Approach]].
 
+The primary M1 is **one model** trained on $P_1$ (4 Gaussian + 8 motion kernels) across all five noise levels; it never sees $k$ or $\sigma$. Kernel mismatch is evaluated on $P_2$-interp (unseen parameters of the same families) and $P_2$-extrap (defocus disks, an unseen family). Per-noise specialists are an ablation only.
+
 ## 4. Contributions
 
 1. A controlled cross-family comparison of inverse-function learners for deblurring under one degradation protocol (shared PSF library, noise grid, boundary handling, splits and metrics).
@@ -76,7 +78,7 @@ M3 is the control: it is physics-aware like M2 and deep like M1, so the three-ar
 
 ## 6. Evaluation
 
-Tier 1 uses BSDS500 with a shared PSF library (Gaussian, Levin motion, defocus) and noise grid $\sigma \in \{0,1,5,15,25\}/255$, circular boundary handling, luminance images. Metrics: PSNR, SSIM, LPIPS, data-consistency residual, kernel-mismatch PSNR drop, and perturbation stability; paired Wilcoxon tests with multiplicity control. The locked protocol is in [[Proposed Approach]] §7.
+Tier 1 uses BSDS500 with the locked PSF sets: $P_1$ (4 Gaussian + 8 motion kernels) for training and in-distribution evaluation, $P_2$-interp (unseen parameters of the same families) and $P_2$-extrap (defocus disks, an unseen family) for kernel mismatch. Noise grid $\sigma \in \{0,1,5,15,25\}/255$, circular boundary handling, luminance images. Metrics: PSNR, SSIM, LPIPS, data-consistency residual, kernel-mismatch PSNR drop, and perturbation stability; paired Wilcoxon tests with multiplicity control. Checkpoint selection uses mean val PSNR over the fixed grid on a 10-image seeded subset of the sorted val list (IDs logged with the protocol); never per-condition selection. The locked protocol is in [[Proposed Approach]] §7.
 
 ## 7. Deliverables
 

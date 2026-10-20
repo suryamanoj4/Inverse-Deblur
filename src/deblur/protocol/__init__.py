@@ -1,5 +1,5 @@
 from .config import ProtocolConfig
-from .splits import check_disjoint, manifest, save_manifest, standard_splits
+from .splits import check_disjoint, manifest, save_manifest, standard_splits, validation_subset
 
 __all__ = [
     "ProtocolConfig",
@@ -7,4 +7,5 @@ __all__ = [
     "manifest",
     "save_manifest",
     "standard_splits",
+    "validation_subset",
 ]

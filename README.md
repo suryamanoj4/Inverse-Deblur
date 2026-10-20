@@ -27,6 +27,8 @@ We cast deblurring as **inverse function learning**: find $g_\theta$ minimizing 
 
 M3 is the control that separates two otherwise confounded axes: **physics-awareness** (does the method use $k$ and $\sigma$?) and **prior depth** (fixed TV → shallow learned GMM → deep learned CNN).
 
+**Protocol snapshot.** M1 is one model trained on $P_1$ (4 Gaussian + 8 motion kernels) across all five noise levels, with no $k$ or $\sigma$ at train or test time. Kernel mismatch is evaluated on $P_2$-interp (unseen parameters of the same families) and $P_2$-extrap (defocus disks, an unseen family). Checkpoint selection uses mean val PSNR over the fixed 60-cell grid on a 10-image seeded subset of the sorted val list (IDs logged with the protocol); per-condition selection is not allowed. Learned arms use AdamW and L2 loss. The complete manifest — PSF membership, sampling policy, checkpoint rule, hyperparameters — is written to `artifacts/protocol/` by `scripts/setup_datasets.py --write-protocol`.
+
 ## Evaluation
 
 - **Tier 1 (core):** BSDS500, synthetically degraded with a shared PSF library (Gaussian, Levin motion, defocus) and noise grid $\sigma \in \{0, 1, 5, 15, 25\}/255$, circular boundary handling.
@@ -124,6 +126,10 @@ The shared foundation and the M2 classical arm are implemented and tested:
 FFT operator, PSF library, degradation pipeline, splits, metrics, Wiener,
 Richardson–Lucy, FISTA-TV, EPLL/GMM training and ADMM-EPLL. Next: validation
 runs on BSDS500, then the M1 (direct CNN) and M3 (unrolled) arms.
+
+Install the learned-arm dependencies (PyTorch and LPIPS) with
+`pip install -r requirements.txt`; for a CPU-only PyTorch wheel, use the
+official index shown in that file.
 
 ## References
 

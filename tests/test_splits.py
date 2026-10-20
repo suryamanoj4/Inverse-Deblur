@@ -7,7 +7,13 @@ import numpy as np
 from PIL import Image
 
 from deblur.data.datasets import BSDS500, sample_patches, split_manifest
-from deblur.protocol.splits import check_disjoint, manifest, save_manifest, standard_splits
+from deblur.protocol.splits import (
+    check_disjoint,
+    manifest,
+    save_manifest,
+    standard_splits,
+    validation_subset,
+)
 
 
 class TestSplits(unittest.TestCase):
@@ -54,6 +60,20 @@ class TestSplits(unittest.TestCase):
     def test_split_manifest_matches(self):
         entries = split_manifest(self.root)
         self.assertEqual({k: len(v) for k, v in entries.items()}, {"train": 2, "val": 1, "test": 2})
+
+
+class TestValidationSubset(unittest.TestCase):
+    def test_deterministic_and_sized(self):
+        paths = [f"img{i:03d}.png" for i in range(100)]
+        first = validation_subset(paths, size=10, seed=0)
+        second = validation_subset(paths, size=10, seed=0)
+        self.assertEqual(first, second)
+        self.assertEqual(len(first), 10)
+        self.assertTrue(set(first) <= {Path(p) for p in paths})
+
+    def test_size_too_large(self):
+        with self.assertRaises(ValueError):
+            validation_subset(["a.png"], size=2)
 
 
 class TestPatchSampling(unittest.TestCase):
