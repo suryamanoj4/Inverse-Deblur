@@ -17,3 +17,9 @@ vault/.obsidian/workspace-mobile.json
 
 # OS / editor noise
 .DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/

@@ -39,6 +39,16 @@ M3 is the control that separates two otherwise confounded axes: **physics-awaren
 .
 ├── README.md            # this file
 ├── proposal.pdf         # submitted 3-page proposal
+├── pyproject.toml       # package metadata
+├── requirements.txt     # core Python dependencies
+├── Makefile             # `make test`
+├── src/deblur/          # shared implementation
+│   ├── operators/       # FFT circular convolution (NumPy + optional PyTorch)
+│   ├── psf/             # Gaussian / motion / defocus PSF library
+│   ├── data/            # degradation pipeline, BSDS500 loader
+│   ├── protocol/        # locked config, splits, manifests
+│   └── metrics/         # PSNR, SSIM, LPIPS (optional), data consistency
+├── tests/               # unittest suite
 └── vault/               # design notes (Obsidian)
     ├── Project Idea.md
     └── Proposed Approach.md
@@ -46,9 +56,17 @@ M3 is the control that separates two otherwise confounded axes: **physics-awaren
 
 LaTeX sources (`proposal/`, `*.tex`) are intentionally **not** versioned here; `proposal.pdf` is the reference artifact. The vault contains the working design record, including the full three-arm method specification.
 
+## Running the tests
+
+```bash
+PYTHONPATH=src python3 -m unittest discover -s tests -v
+# or
+make test
+```
+
 ## Status
 
-Proposal stage. Next: implement the degradation pipeline and PSF library, then the classical baselines.
+Shared foundation implemented and tested: FFT operator (forward + adjoint), PSF library, synthetic degradation, BSDS500 splits, metrics. Next: the classical arm (Wiener, Richardson–Lucy, FISTA-TV, ADMM-EPLL).
 
 ## References
 

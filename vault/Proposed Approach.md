@@ -204,18 +204,52 @@ $$
 
 ---
 
-## 7. Protocol invariants (must be identical across arms)
+## 7. Datasets, splits, and protocol (locked)
+
+### 7.1 Datasets
+
+| Tier | Dataset | Size / split | Role |
+|---|---|---|---|
+| **1 (core)** | **BSDS500** (Arbeláez et al., TPAMI 2011) | 500 images: **200 train / 100 val / 200 test** | Controlled synthetic comparison |
+| **2 (stretch)** | **GoPro** (Nah et al., CVPR 2017) | 3,214 pairs: **2,103 train / 1,111 test**, no kernels | Blind deblurring; out-of-protocol stress test unless kernel estimation is added |
+
+**Not used:** Set5 / Set14 / Urban100 / Kodak (SR benchmarks). DIV2K is allowed only as an optional *data-scale ablation* applied to **all** learned priors.
+
+### 7.2 Locked preprocessing decisions
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| BSDS version | **BSDS500**, standard directory split | Resolves the proposal's ambiguous "BSDS300/500"; matches the TPAMI citation |
+| Color space | **Luminance only** (Rec.601), core protocol | EPLL/K-SVD are grayscale; keeps all arms comparable |
+| Training data | **BSDS500 train only**, for every learned component (GMM prior, CNN weights, unrolled nets) | Prevents cross-arm training-data confounds and GMM leakage |
+| Validation | **BSDS500 val only** for $\lambda$ tuning and early stopping | Same val for every arm; test never used for model selection |
+| Test | **BSDS500 test**, full images; 256×256 centre crops as secondary | Circular degradation makes full-image FFT evaluation exact |
+| Patch protocol | Split **by image first**, then crop 128×128 patches | Patches from one image never straddle splits |
+| Augmentation | Flips + 90° rotations, identical for all learned priors | Removes augmentation as a confound |
+| PSF library | Gaussian $\sigma_k \in \{0.7,1.2,1.6,2.0\}$; Levin 8 motion kernels; defocus radii $\{3,5,7,9\}$ | Matches the proposal; kernels fixed in-repo |
+| Noise | $\sigma \in \{0,1,5,15,25\}/255$, additive white Gaussian, clipped to $[0,1]$ | Clipping is part of the observation model for every arm |
+| Boundary | Circular / FFT | Required by the closed-form data modules |
+
+### 7.3 Protocol invariants (must be identical across arms)
 
 | Item | Setting |
 |---|---|
-| Data | BSDS500 standard splits (200 train / 100 val / 200 test); 128×128 patches |
-| PSF library | Gaussian $\sigma_k \in \{0.7, 1.2, 1.6, 2.0\}$; Levin motion kernels; defocus disks |
-| Noise | $\sigma \in \{0, 1, 5, 15, 25\}/255$ |
-| Boundary | Circular / FFT, stated explicitly |
+| Input | $y$ only (M1); $y, k, \sigma$ (M2, M3) |
 | Normalization | Identical across methods; **never** inside the forward model (noise is absolute) |
 | Metrics | PSNR, SSIM, LPIPS; data-consistency residual $\lVert A\hat{x}-y\rVert_2$; kernel-mismatch PSNR drop; PGD stability |
 | Statistics | Paired Wilcoxon signed-rank; pre-register 1–2 primary endpoints; Holm–Bonferroni for the rest |
-| Reproducibility | Fixed seeds; released protocol |
+| Reproducibility | Fixed seeds; split manifest saved with every run; released protocol |
+
+### 7.4 Implementation status
+
+| Step | Module | Status |
+|---|---|---|
+| 1 | `operators/fft_conv.py` | ✅ implemented + tested |
+| 2 | `psf/library.py` | ✅ implemented + tested |
+| 3 | `data/degrade.py`, `data/datasets.py`, `protocol/` | ✅ implemented + tested |
+| 3 | `metrics/` (PSNR, SSIM, consistency) | ✅ implemented + tested; LPIPS optional |
+| 4–6 | classical baselines | ⏳ next |
+| 7–8 | direct + unrolled arms | ⏳ after protocol lock |
 
 ---
 
