@@ -62,6 +62,24 @@ class TestProtocolSets(unittest.TestCase):
         names = [psf.name for kernels in protocol_psf_sets().values() for psf in kernels]
         self.assertEqual(len(names), len(set(names)))
 
+    def test_interp_parameters_inside_train_ranges(self):
+        import inspect
+
+        defaults = {
+            name: param.default
+            for name, param in inspect.signature(protocol_psf_sets).parameters.items()
+        }
+        for family in ("gaussian_sigmas", "motion_lengths"):
+            train = defaults[f"train_{family}"]
+            for value in defaults[f"interp_{family}"]:
+                self.assertGreater(value, min(train), family)
+                self.assertLess(value, max(train), family)
+                self.assertNotIn(value, train, family)
+        # angles are circular (a line kernel at a and a + 180 is identical)
+        train_angles = {angle % 180 for angle in defaults["train_motion_angles"]}
+        for angle in defaults["interp_motion_angles"]:
+            self.assertNotIn(angle % 180, train_angles)
+
     def test_all_normalised(self):
         for kernels in protocol_psf_sets().values():
             for psf in kernels:

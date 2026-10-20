@@ -16,7 +16,7 @@ class TestProtocolConfig(unittest.TestCase):
         self.assertEqual(config.eval_psf_sets, ("P1", "P2_interp", "P2_extrap"))
         self.assertEqual(config.optimizer, "adamw")
         self.assertEqual(config.loss, "l2")
-        self.assertEqual(config.m1_iterations, 40_000)
+        self.assertEqual(config.m1_iterations, 100_000)
         self.assertEqual(config.m3_iterations, 30_000)
 
     def test_manifest_logs_protocol_fields(self):

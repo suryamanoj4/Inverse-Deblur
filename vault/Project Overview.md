@@ -108,4 +108,4 @@ Full bibliography: [[Proposed Approach]] §12.
 
 ## 9. Status
 
-Active. The shared foundation (FFT operator, PSF library, degradation pipeline, splits, metrics) is implemented and tested. Next: the classical arm (Wiener, Richardson–Lucy, FISTA-TV, ADMM-EPLL).
+Active. The shared foundation (FFT operator, PSF library, degradation pipeline, splits, metrics) and the classical arm (Wiener, Richardson–Lucy, FISTA-TV, ADMM-EPLL) are implemented and tested. The M1 arm (NAFNet, U-Net, training and evaluation harness) is implemented and tested; its training run is next, then the M3 arm.

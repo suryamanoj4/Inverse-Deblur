@@ -34,7 +34,7 @@ Related: [[Project Overview]] · Proposal PDF: `proposal.pdf`
 |---|---|
 | Forward model | $y = Ax + \varepsilon$, $\varepsilon \sim \mathcal{N}(0,\sigma^2)$ |
 | Operator | $A$ = circular convolution with PSF $k$; diagonalized by FFT: $A = \mathcal{F}^{-1}\mathrm{diag}(\kappa)\mathcal{F}$, $\kappa = \mathcal{F}k$ |
-| PSF library | Gaussian $\sigma_k \in \{0.7, 1.2, 1.6, 2.0\}$; Levin motion kernels; defocus disks |
+| PSF library | Gaussian $\sigma_k \in \{0.7, 1.2, 1.6, 2.0\}$; procedural linear motion kernels; defocus disks |
 | Noise grid | $\sigma \in \{0, 1, 5, 15, 25\}/255$ |
 | Data | BSDS500 splits (200 train / 100 val / 200 test), 128×128 patches, circular boundary |
 | Metrics | PSNR, SSIM, LPIPS, data-consistency residual $\lVert A\hat{x}-y\rVert_2$, kernel-mismatch PSNR drop, PGD stability |
@@ -82,7 +82,7 @@ Learns a direct mapping $g_\theta(y) \to x$ from (blurry, sharp) pairs. The degr
 | Set | Membership | Count | Use |
 |---|---|---|---|
 | **$P_1$** | Gaussian $\sigma_k\in\{0.7,1.2,1.6,2.0\}$; motion length $\{9,15\}$ px $\times$ angle $\{0,45,90,135\}^\circ$ | 4 + 8 = **12** | Training and in-distribution evaluation |
-| **$P_2$-interp** | Gaussian $\sigma_k\in\{0.9,1.4,1.8\}$; motion length $\{12,18\}$ px $\times$ angle $\{22.5,67.5,112.5,157.5\}^\circ$ | 3 + 8 = **11** | Kernel mismatch, same families, unseen parameters |
+| **$P_2$-interp** | Gaussian $\sigma_k\in\{0.9,1.4,1.8\}$; motion length $\{11,13\}$ px $\times$ angle $\{22.5,67.5,112.5,157.5\}^\circ$ | 3 + 8 = **11** | Kernel mismatch, same families, unseen parameters inside the $P_1$ ranges |
 | **$P_2$-extrap** | Defocus disks, radii $\{3,5,7,9\}$ px | **4** | Kernel mismatch, unseen family |
 
 The sets are disjoint by name and parameter. Defocus is deliberately absent from $P_1$: it is the unseen-family test. The general PSF library (16 kernels) remains available for other experiments, but the protocol uses these sets.
@@ -94,7 +94,7 @@ The sets are disjoint by name and parameter. Defocus is deliberately absent from
 - **Checkpoint rule.** One checkpoint per learned arm: highest mean PSNR over the fixed 60-cell grid on a pre-registered 10-image subset of the sorted BSDS500-val list (drawn with seed 0 by `validation_subset`; the image IDs are written to `val_subset.json`). No per-condition checkpoint selection. The same rule applies to M3; the per-$\sigma$ ablation is the only exception.
 - **Kernel mismatch.** Train on $P_1$, evaluate on $P_2$-interp and $P_2$-extrap with the same noise grid. M1 never sees the test kernels.
 - **Ablation, not M1.** The per-noise oracle is five models fine-tuned from the primary M1 checkpoint (10k iterations each, same PSFs); it measures how much of the gap is due to not knowing $\sigma$. Per-PSF oracles are out of scope: 12 models if $\sigma$ is shared, 60 if per-$(k,\sigma)$.
-- **Hyperparameters.** AdamW ($\beta=(0.9,0.999)$, weight decay $10^{-4}$), L2 loss, M1 batch 16 / M3 batch 8 at $128^2$, M1 lr $2\times10^{-4}$ / M3 lr $10^{-4}$, 1k warmup + cosine decay, gradient clipping 1.0, M1 40k / M3 30k iterations maximum, validation every 2k, early stopping patience 4.
+- **Hyperparameters.** AdamW ($\beta=(0.9,0.999)$, weight decay $10^{-4}$), L2 loss, M1 batch 16 / M3 batch 8 at $128^2$, M1 lr $2\times10^{-4}$ / M3 lr $10^{-4}$, 1k warmup + cosine decay, gradient clipping 1.0, M1 100k / M3 30k iterations maximum, validation every 2k, early stopping patience 4.
 
 ### Characteristics
 - **Inputs:** $y$ only. No $k$, no $\sigma$.
@@ -270,7 +270,7 @@ membership, sampling policy, checkpoint rule, and learned-arm hyperparameters.
 | Test | **BSDS500 test**, full images; 256×256 centre crops as secondary | Circular degradation makes full-image FFT evaluation exact |
 | Patch protocol | Split **by image first**, then crop 128×128 patches | Patches from one image never straddle splits |
 | Augmentation | Flips + 90° rotations, identical for all learned priors | Removes augmentation as a confound |
-| PSF library | Gaussian $\sigma_k \in \{0.7,1.2,1.6,2.0\}$; Levin 8 motion kernels; defocus radii $\{3,5,7,9\}$ | Matches the proposal; kernels fixed in-repo |
+| PSF library | Gaussian $\sigma_k \in \{0.7,1.2,1.6,2.0\}$; 8 procedural linear motion kernels (length × angle); defocus radii $\{3,5,7,9\}$ | Kernels generated in code, no download; official Levin kernels optional, outside the protocol |
 | Noise | $\sigma \in \{0,1,5,15,25\}/255$, additive white Gaussian, clipped to $[0,1]$ | Clipping is part of the observation model for every arm |
 | Boundary | Circular / FFT | Required by the closed-form data modules |
 
@@ -295,7 +295,8 @@ membership, sampling policy, checkpoint rule, and learned-arm hyperparameters.
 | 3 | `data/degrade.py`, `data/datasets.py`, `protocol/` | ✅ implemented + tested |
 | 3 | `metrics/` (PSNR, SSIM, consistency) | ✅ implemented + tested; LPIPS optional |
 | 4–6 | classical arm (`wiener`, `richardson_lucy`, `fista_tv`, `admm_epll`, `gmm`) | ✅ implemented + tested |
-| 7–8 | direct + unrolled arms | ⏳ next |
+| 7 | direct arm (`direct/nafnet.py`, `direct/unet.py`, `training/`, `scripts/train_m1.py`, `scripts/eval_m1.py`) | ✅ implemented + tested; training run pending |
+| 8 | unrolled arm | ⏳ next |
 
 ---
 

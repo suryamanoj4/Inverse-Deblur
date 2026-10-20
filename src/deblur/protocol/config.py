@@ -45,7 +45,7 @@ class ProtocolConfig:
     loss: str = "l2"
     m1_batch_size: int = 16
     m3_batch_size: int = 8
-    m1_iterations: int = 40_000
+    m1_iterations: int = 100_000
     m3_iterations: int = 30_000
     m1_learning_rate: float = 2e-4
     m3_learning_rate: float = 1e-4

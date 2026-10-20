@@ -164,7 +164,7 @@ def protocol_psf_sets(
     interp_gaussian_sigmas: tuple[float, ...] = (0.9, 1.4, 1.8),
     train_motion_lengths: tuple[float, ...] = (9.0, 15.0),
     train_motion_angles: tuple[float, ...] = (0.0, 45.0, 90.0, 135.0),
-    interp_motion_lengths: tuple[float, ...] = (12.0, 18.0),
+    interp_motion_lengths: tuple[float, ...] = (11.0, 13.0),
     interp_motion_angles: tuple[float, ...] = (22.5, 67.5, 112.5, 157.5),
     extrap_defocus_radii: tuple[float, ...] = (3.0, 5.0, 7.0, 9.0),
     thickness: float = 1.5,
@@ -172,7 +172,8 @@ def protocol_psf_sets(
     """Locked P1 / P2 kernel sets for the controlled protocol.
 
     P1 (training, 12 kernels): 4 Gaussian + 8 motion.
-    P2-interp (11): unseen parameters of the same families.
+    P2-interp (11): unseen parameters of the same families, strictly inside
+    the P1 parameter ranges so it tests interpolation, not extrapolation.
     P2-extrap (4): defocus disks, a family absent from training.
 
     The three sets are disjoint by construction (different names and

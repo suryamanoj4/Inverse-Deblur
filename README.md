@@ -31,7 +31,7 @@ M3 is the control that separates two otherwise confounded axes: **physics-awaren
 
 ## Evaluation
 
-- **Tier 1 (core):** BSDS500, synthetically degraded with a shared PSF library (Gaussian, Levin motion, defocus) and noise grid $\sigma \in \{0, 1, 5, 15, 25\}/255$, circular boundary handling.
+- **Tier 1 (core):** BSDS500, synthetically degraded with a shared PSF library (Gaussian, procedural linear motion, defocus) and noise grid $\sigma \in \{0, 1, 5, 15, 25\}/255$, circular boundary handling.
 - **Tier 2 (stretch):** GoPro (3214 real blurry/sharp pairs) for blind deblurring.
 - **Metrics:** PSNR, SSIM, LPIPS, data-consistency residual, kernel-mismatch robustness, and stability under small perturbations; paired Wilcoxon tests with multiplicity control.
 
@@ -48,12 +48,16 @@ M3 is the control that separates two otherwise confounded axes: **physics-awaren
 │   ├── operators/       # FFT circular convolution (NumPy + optional PyTorch)
 │   ├── psf/             # Gaussian / motion / defocus PSF library
 │   ├── data/            # degradation pipeline, BSDS500 loader
-│   ├── protocol/        # locked config, splits, manifests
-│   └── metrics/         # PSNR, SSIM, LPIPS (optional), data consistency
+│   ├── protocol/        # locked config, splits, manifests, evaluation cells
+│   ├── metrics/         # PSNR, SSIM, LPIPS (optional), data consistency
+│   ├── methods/         # classical/ (M2), direct/ (M1: NAFNet, U-Net)
+│   └── training/        # patch sampler, grid evaluation, training loop
 ├── tests/               # unittest suite
 ├── scripts/
 │   ├── train_gmm.py     # fit the EPLL/GMM prior on BSDS500 train
-│   └── run_classical.py # run all M2 methods and report metrics
+│   ├── run_classical.py # run all M2 methods and report metrics
+│   ├── train_m1.py      # train an M1 network under the locked protocol
+│   └── eval_m1.py       # score an M1 checkpoint on P1 / P2-interp / P2-extrap
 └── vault/               # design notes (Obsidian)
     ├── Project Overview.md
     └── Proposed Approach.md
@@ -120,12 +124,45 @@ PYTHONPATH=src python3 scripts/run_classical.py \
 The script reports PSNR, SSIM and the data-consistency residual for Wiener,
 Richardson–Lucy, FISTA-TV and ADMM-EPLL.
 
+## Running the modern arm (M1)
+
+Train the primary M1 (NAFNet, width 32) on $P_1$ × all noise levels. Every
+hyperparameter comes from `ProtocolConfig`; the run directory gets `run.json`
+(protocol manifest, validation image IDs, git commit), `log.jsonl`, `best.pt`
+(selected by mean val PSNR) and a resumable `last.pt`:
+
+```bash
+PYTHONPATH=src python3 scripts/train_m1.py --data-root data            # NAFNet
+PYTHONPATH=src python3 scripts/train_m1.py --data-root data --model unet
+PYTHONPATH=src python3 scripts/train_m1.py --data-root data --resume   # continue
+```
+
+Evaluate on the test split over $P_1$, $P_2$-interp and $P_2$-extrap (one CSV
+row per image × PSF × noise level, with PSNR, SSIM and the data-consistency
+residual; add `--lpips` for LPIPS):
+
+```bash
+PYTHONPATH=src python3 scripts/eval_m1.py --data-root data \
+  --checkpoint checkpoints/m1/nafnet/best.pt
+```
+
+The per-noise oracle ablation fine-tunes the primary checkpoint at one noise
+level: `--noise-over-255 15 --init checkpoints/m1/nafnet/best.pt`. Flags such as
+`--iterations` or `--batch-size` override the protocol for smoke tests and are
+recorded under `deviations` in `run.json`.
+
+Validation and test observations are generated per (image, PSF, σ) cell with a
+seed derived from their names (`deblur.protocol.observe`), so every arm is
+scored on identical noisy inputs and results pair one-to-one.
+
 ## Status
 
 The shared foundation and the M2 classical arm are implemented and tested:
 FFT operator, PSF library, degradation pipeline, splits, metrics, Wiener,
-Richardson–Lucy, FISTA-TV, EPLL/GMM training and ADMM-EPLL. Next: validation
-runs on BSDS500, then the M1 (direct CNN) and M3 (unrolled) arms.
+Richardson–Lucy, FISTA-TV, EPLL/GMM training and ADMM-EPLL. The M1 arm
+(NAFNet, U-Net, protocol sampler, training loop, grid evaluation) is
+implemented and tested but not yet trained. Next: the M1 training run, then
+the M3 (unrolled) arm.
 
 Install the learned-arm dependencies (PyTorch and LPIPS) with
 `pip install -r requirements.txt`; for a CPU-only PyTorch wheel, use the
