@@ -1,10 +1,9 @@
 ---
 title: Proposed Approach — Three-Arm Comparison
 date: 2026-10-19
-updated: 2026-10-19
+updated: 2026-10-20
 tags:
   - project
-  - smai
   - deblurring
   - methods
   - design
@@ -14,18 +13,18 @@ aliases:
   - Method Design
   - Three-Arm Study
   - Method Inventory
-status: draft
+status: active
 ---
 
 # Proposed Approach — Three-Arm Comparison
 
-> [!abstract] In one line
+> [!abstract] Summary
 > Three **established** methods, one controlled protocol: **M1** (data-only CNN), **M2** (physics-aware classical-ML solver), **M3** (physics-aware unrolled network, the control). No new architecture in the core study — the comparison itself is the contribution, and its failure signature motivates the follow-up method.
 
-Related: [[Project Idea]] · Proposal PDF: `proposal.pdf`
+Related: [[Project Overview]] · Proposal PDF: `proposal.pdf`
 
-> [!important] Purpose of this note
-> This is the single source of truth for **what we implement**. Every method below is specified by its objective, solver, prior, what is learned, what is fixed, and its role in the study, so that code written by different people stays comparable.
+> [!note] Scope
+> This document is the technical specification for the three-arm comparison summarized in [[Project Overview]]. Each method is defined by its objective, solver, prior, what is learned, what is fixed, and its role in the study.
 
 ---
 
@@ -315,16 +314,16 @@ After step 6 the study is runnable on CPU, before any GPU training.
 
 ---
 
-## 11. Decisions and open risks
+## 11. Implementation constraints
 
-- [ ] **Framework** — PyTorch for learned arms; NumPy/SciPy for classical solvers and GMM/EM.
-- [ ] **USRNet retraining for deblurring ($s{=}1$)** — official weights are SISR; plan fine-tuning, not scratch training.
-- [ ] **LISTA adaptation** to convolutional $A$ — allocate implementation time.
-- [ ] **Compute discipline** — do not run all algorithms on the full grid. Core grid: one representative per arm (NAFNet, FISTA+EPLL, USRNet). Genealogy rungs on a reduced grid only.
-- [ ] **Headline M1 = NAFNet**, not DeepDeblur (2017).
-- [ ] **K-SVD is optional** — drop first if the schedule slips.
-- [ ] **Multiplicity** — dozens of Wilcoxon tests will manufacture false positives without correction.
-- [ ] **Blind vs non-blind scope** — Tier 1 gives true $k$ to M2/M3; GoPro is blind, so either add kernel estimation or label it an out-of-protocol stress test.
+- **Framework.** PyTorch for learned arms; NumPy/SciPy for classical solvers and GMM/EM.
+- **USRNet retraining.** Official weights are SISR; deblurring requires fine-tuning at $s{=}1$, not scratch training.
+- **LISTA adaptation.** The convolutional operator requires re-deriving the iteration with learnable step sizes/thresholds.
+- **Compute discipline.** The core grid runs one representative per arm (NAFNet, FISTA+EPLL, USRNet); genealogy rungs use a reduced grid.
+- **Headline M1.** NAFNet is the primary data-only model; DeepDeblur (2017) is the historical rung.
+- **K-SVD** is optional and is dropped first if the schedule tightens.
+- **Multiplicity.** Dozens of Wilcoxon tests require Holm–Bonferroni correction or pre-registered endpoints.
+- **Blind vs non-blind.** Tier 1 provides true $k$ to M2/M3; GoPro is blind and is treated as an out-of-protocol stress test unless kernel estimation is added.
 
 ---
 
@@ -353,4 +352,4 @@ After step 6 the study is runnable on CPU, before any GPU training.
 
 ---
 
-Status: draft — implementation reference for the three-arm study. The 3-page proposal keeps the summary; this note is the full method record.
+Status: active — implementation reference for the three-arm study. [[Project Overview]] gives the summary; this document is the full method record.

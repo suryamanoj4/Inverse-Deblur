@@ -1,7 +1,7 @@
 # Inverse Function Learning for Image Deblurring
 ### Classical vs. Modern Machine Learning
 
-Research proposal and design notes for a controlled study of image deblurring as an inverse-function learning problem.
+Project documentation for a controlled study of image deblurring as an inverse-function learning problem.
 
 **Authors:** Surya Manoj Pentakota (2026701036), Kevin Paul Reddy Janagari (2026900006) — IIIT Hyderabad
 
@@ -38,7 +38,7 @@ M3 is the control that separates two otherwise confounded axes: **physics-awaren
 ```
 .
 ├── README.md            # this file
-├── proposal.pdf         # submitted 3-page proposal
+├── proposal.pdf         # project proposal (PDF)
 ├── pyproject.toml       # package metadata
 ├── requirements.txt     # core Python dependencies
 ├── Makefile             # `make test`
@@ -50,7 +50,7 @@ M3 is the control that separates two otherwise confounded axes: **physics-awaren
 │   └── metrics/         # PSNR, SSIM, LPIPS (optional), data consistency
 ├── tests/               # unittest suite
 └── vault/               # design notes (Obsidian)
-    ├── Project Idea.md
+    ├── Project Overview.md
     └── Proposed Approach.md
 ```
 
