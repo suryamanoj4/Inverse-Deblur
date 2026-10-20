@@ -77,6 +77,14 @@ Learns a direct mapping $g_\theta(y) \to x$ from (blurry, sharp) pairs. The degr
 | **DeepDeblur** (Nah et al., CVPR 2017) | Multi-scale coarse-to-fine CNN pyramid; residual blocks; kernel-free | All weights | Historical rung |
 | **NAFNet** (Chen et al., ECCV 2022) | U-Net + NAFBlocks: SimpleGate (channel split + elementwise product), simplified channel attention, LayerNorm, no nonlinear activations | All weights | **Primary M1** |
 
+### Training regime (locked)
+
+- **One model for the whole training grid.** M1 is trained once on all PSFs in $P_1$ and all noise levels, and receives no $k$ or $\sigma$ at train or test time. This matches M3, which is also a single model across the grid (with $k,\sigma$ as inputs), so the comparison is about the family rather than the number of models.
+- **Condition-balanced sampling.** Each batch samples a PSF from $P_1$ and a noise level from the grid; conditions are balanced across an epoch.
+- **Validation.** Checkpoint selection uses BSDS500 val, averaged over the same grid; the rule is pre-registered.
+- **Kernel-mismatch protocol.** Train on $P_1$, evaluate on $P_2$ with the same noise grid. M1 never sees the test kernel — that is what the experiment measures.
+- **Ablation, not M1.** A per-noise-level oracle (five models, same PSF set) quantifies how much of the M1–M3 gap is due to not knowing $\sigma$. Per-PSF oracles are out of scope (16+ models, compute cost).
+
 ### Characteristics
 - **Inputs:** $y$ only. No $k$, no $\sigma$.
 - **Inversion:** a single learned forward pass.
