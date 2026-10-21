@@ -23,9 +23,11 @@ import torch.nn.functional as F
 from torch import nn
 
 from ..protocol.config import ProtocolConfig
-from .sampler import PatchSampler
+from .sampler import Batch, PatchSampler
 
 Validator = Callable[[nn.Module], tuple[float, list[dict]]]
+ForwardFn = Callable[[nn.Module, Batch], torch.Tensor]
+Criterion = Callable[[nn.Module, torch.Tensor, torch.Tensor], torch.Tensor]
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,8 @@ class Trainer:
         settings: TrainSettings,
         out_dir: str | Path,
         metadata: dict | None = None,
+        forward_fn: ForwardFn | None = None,
+        criterion: Criterion | None = None,
     ) -> None:
         self.model = model
         self.sampler = sampler
@@ -85,6 +89,10 @@ class Trainer:
         self.out_dir = Path(out_dir)
         self.metadata = metadata or {}
         self.device = sampler.device
+        self.forward_fn = forward_fn or (lambda model, batch: model(batch.observed))
+        self.criterion = criterion or (
+            lambda model, output, clean: F.mse_loss(output.float(), clean)
+        )
         self.optimizer = torch.optim.AdamW(
             model.parameters(),
             lr=settings.learning_rate,
@@ -191,8 +199,8 @@ class Trainer:
         while self.iteration < s.iterations:
             batch = self.sampler.sample()
             with torch.autocast(device_type=device_type, dtype=torch.bfloat16, enabled=s.amp):
-                output = self.model(batch.observed)
-            loss = F.mse_loss(output.float(), batch.clean)
+                output = self.forward_fn(self.model, batch)
+            loss = self.criterion(self.model, output, batch.clean)
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), s.gradient_clip)

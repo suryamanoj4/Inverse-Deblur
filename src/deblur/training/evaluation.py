@@ -1,75 +1,16 @@
-"""Grid evaluation for the learned arms.
+"""Model wrappers for grid evaluation (requires PyTorch).
 
-Observations come from :func:`deblur.protocol.observe`, so every arm sees the
-same noise draw for the same (image, PSF, sigma) cell. Validation uses PSNR
-only (it runs every ``val_interval`` iterations); test evaluation can add SSIM,
-the data-consistency residual and LPIPS.
+The torch-free grid logic lives in :mod:`deblur.evaluation.grid`.
 """
 
 from __future__ import annotations
 
-from collections import defaultdict
-from typing import Callable
-
 import numpy as np
 import torch
 
-from ..metrics import data_consistency, psnr, ssim
-from ..protocol.observations import observe
+from ..evaluation.grid import Restorer, evaluate_grid, mean_psnr
+from ..operators.fft_conv import kernel_spectrum
 from ..psf.library import PSF
-
-Restorer = Callable[[np.ndarray, PSF, float], np.ndarray]
-
-
-def evaluate_grid(
-    restore_fn: Restorer,
-    images: list[tuple[str, np.ndarray]],
-    psfs: list[PSF],
-    noise_levels: tuple[float, ...] | list[float],
-    *,
-    seed: int,
-    full_metrics: bool = False,
-    lpips_metric=None,
-) -> list[dict]:
-    """Score ``restore_fn(y, psf, sigma)`` on every (image, PSF, sigma) cell.
-
-    ``restore_fn`` receives the PSF and sigma so the same harness serves the
-    physics-aware arms; M1 restorers must ignore them.
-    """
-    rows = []
-    for image_id, x in images:
-        for psf in psfs:
-            for sigma in noise_levels:
-                y = observe(x, psf.kernel, sigma, seed=seed, image_id=image_id, psf_name=psf.name)
-                x_hat = restore_fn(y, psf, sigma)
-                row = {
-                    "image": image_id,
-                    "psf": psf.name,
-                    "kind": psf.kind,
-                    "sigma_255": round(sigma * 255),
-                    "psnr": psnr(x, x_hat),
-                }
-                if full_metrics:
-                    row["ssim"] = ssim(x, x_hat)
-                    row["residual_rmse"] = data_consistency(x_hat, y, psf.kernel).rmse
-                if lpips_metric is not None:
-                    row["lpips"] = lpips_metric(x, x_hat)
-                rows.append(row)
-    return rows
-
-
-def mean_psnr(rows: list[dict]) -> float:
-    """Checkpoint score: mean over cells of the per-cell mean PSNR.
-
-    Averaging per cell first keeps every (PSF, sigma) cell at equal weight,
-    which is what the locked ``mean_val_psnr`` rule specifies.
-    """
-    cells: dict[tuple, list[float]] = defaultdict(list)
-    for row in rows:
-        cells[(row["psf"], row["sigma_255"])].append(row["psnr"])
-    if not cells:
-        raise ValueError("no rows to score")
-    return float(np.mean([np.mean(values) for values in cells.values()]))
 
 
 def model_restorer(
@@ -84,3 +25,29 @@ def model_restorer(
         return restore(model, y, device=device, amp=amp)
 
     return restore_fn
+
+
+def physics_restorer(
+    model: torch.nn.Module,
+    device: str | torch.device,
+    amp: bool = False,
+) -> Restorer:
+    """Wrap an M3 network; it receives the true PSF and sigma at test time."""
+
+    @torch.inference_mode()
+    def restore_fn(y: np.ndarray, psf: PSF, sigma: float) -> np.ndarray:
+        H, W = y.shape
+        spectrum = kernel_spectrum(psf.kernel, (H, W))
+        t_y = torch.as_tensor(y, dtype=torch.float32, device=device)[None, None]
+        t_k = torch.as_tensor(spectrum, dtype=torch.complex64, device=device)[None]
+        t_sigma = torch.as_tensor([sigma], dtype=torch.float32, device=device)
+        device_type = torch.device(device).type
+        with torch.autocast(device_type=device_type, dtype=torch.bfloat16, enabled=amp):
+            out = model(t_y, t_k, t_sigma)
+        out = out.float()[0, 0].cpu().numpy().astype(np.float64)
+        return np.clip(out, 0.0, 1.0)
+
+    return restore_fn
+
+
+__all__ = ["evaluate_grid", "mean_psnr", "model_restorer", "physics_restorer"]

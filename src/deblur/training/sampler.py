@@ -26,6 +26,7 @@ class Batch:
     psf_index: torch.Tensor  # (B,)
     sigma_index: torch.Tensor  # (B,)
     kernel: torch.Tensor  # (B, P, P) complex spectrum, for physics-aware arms
+    sigma: torch.Tensor | None = None  # (B,) noise levels, for physics-aware arms
 
 
 class PatchSampler:
@@ -94,7 +95,14 @@ class PatchSampler:
         )
         sigma = self.noise_levels[sigma_t].view(B, 1, 1, 1)
         y = torch.clamp(blurred + sigma * noise, 0.0, 1.0)
-        return Batch(clean=x, observed=y, psf_index=psf_t, sigma_index=sigma_t, kernel=spectra)
+        return Batch(
+            clean=x,
+            observed=y,
+            psf_index=psf_t,
+            sigma_index=sigma_t,
+            kernel=spectra,
+            sigma=self.noise_levels[sigma_t],
+        )
 
     def state_dict(self) -> dict:
         return {

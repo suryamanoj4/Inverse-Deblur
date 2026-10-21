@@ -226,6 +226,58 @@ $$
 | Expected failure | Kernel mismatch, hallucination, instability | Staircase/ringing; needs correct $k$ | Between the two; still sensitive to unseen kernels |
 | Role | Data-only pole | Physics + shallow-prior pole | Bridge / control |
 
+### 5.1 Model and artifact inventory
+
+The word "model" means something different in each arm. Only M1 and M3 train
+end-to-end networks; M2 learns a prior and runs a per-image solver.
+
+| Arm | Approach | Trained? | Artifacts |
+|---|---|---|---|
+| **M1** | NAFNet (primary) | one model on $P_1$ × all noise levels | **1** |
+| M1 | U-Net (minimal baseline) | one model | 1 |
+| M1 | DeepDeblur (historical) | optional, not implemented | 0 |
+| M1 | per-$\sigma$ specialists (ablation) | fine-tuned from the NAFNet checkpoint | 5 |
+| **M2** | Wiener | no training | 0 |
+| M2 | Richardson–Lucy | no training | 0 |
+| M2 | FISTA-TV | no training; $\lambda$ tuned per $\sigma$ on val | 0 |
+| M2 | ADMM-EPLL (primary) | one GMM prior, shared across images and $\sigma$ | **1** |
+| M2 | GMM $K$-sweep ($K=1,4,16,64,200$) | one prior per $K$ | 5 total |
+| M2 | K-SVD | optional, not implemented | 0 |
+| **M3** | USRNet (primary) | one model on $P_1$ × all noise levels; $k,\sigma$ inputs | **1** |
+| M3 | ISTA-Net | one model | 1 |
+| M3 | LISTA | one model | 1 |
+
+**Counts**
+
+- **Core comparison: 3 trained artifacts** — NAFNet, the EPLL prior ($K=200$), USRNet.
+- **Planned full study: 15** — 2 M1 networks + 5 per-$\sigma$ specialists + 5 GMM priors + 3 M3 networks.
+- **With DeepDeblur and K-SVD: 17.**
+
+**What "one model" means**
+
+- M1 and M3 train **once** on all 12 $P_1$ kernels × 5 noise levels. They are not retrained per PSF or per $\sigma$.
+- M1 never receives $k$ or $\sigma$; M3 receives both as inputs.
+- M2 has no network. The GMM prior is trained once on clean BSDS500 train patches and shared across images and noise levels; the solver runs per image. The per-noise $\lambda$ values are five scalars per method, not models.
+- The $K$-sweep and the per-$\sigma$ specialists are ablations, not the primary arms.
+
+**Expected checkpoint layout**
+
+```
+checkpoints/
+  m1/
+    nafnet/{run.json,log.jsonl,best.pt,last.pt}
+    unet/{run.json,log.jsonl,best.pt,last.pt}
+    nafnet_sigma{0,1,5,15,25}/{best.pt,run.json}   # ablation, fine-tuned
+  m2/
+    epll_gmm_K{1,4,16,64,200}.npz                   # priors; K=200 is primary
+  m3/
+    usrnet/{run.json,log.jsonl,best.pt,last.pt}
+    ista_net/{run.json,log.jsonl,best.pt,last.pt}
+    lista/{run.json,log.jsonl,best.pt,last.pt}
+```
+
+Evaluation artifacts land in `artifacts/eval/` (CSV, summary JSON, metadata JSON).
+
 ---
 
 ## 6. Hypotheses, stated over the three arms
@@ -295,8 +347,9 @@ membership, sampling policy, checkpoint rule, and learned-arm hyperparameters.
 | 3 | `data/degrade.py`, `data/datasets.py`, `protocol/` | ✅ implemented + tested |
 | 3 | `metrics/` (PSNR, SSIM, consistency) | ✅ implemented + tested; LPIPS optional |
 | 4–6 | classical arm (`wiener`, `richardson_lucy`, `fista_tv`, `admm_epll`, `gmm`) | ✅ implemented + tested |
-| 7 | direct arm (`direct/nafnet.py`, `direct/unet.py`, `training/`, `scripts/train_m1.py`, `scripts/eval_m1.py`) | ✅ implemented + tested; training run pending |
-| 8 | unrolled arm | ⏳ next |
+| 7 | direct arm (`direct/nafnet.py`, `direct/unet.py`, `training/`, `scripts/train_m1.py`, `scripts/eval_m1.py`) | ✅ implemented + tested; preliminary run reported, protocol-locked run pending |
+| 8 | unrolled arm (`unrolled/usrnet.py`, `unrolled/ista_net.py`, `unrolled/lista.py`, `scripts/train_m3.py`) | ✅ implemented + tested (torch-guarded) |
+| 9 | unified evaluation (`evaluation/`, `scripts/evaluate.py`) with paired per-cell baseline | ✅ implemented + tested |
 
 ---
 
@@ -329,22 +382,40 @@ src/
   operators/fft_conv.py      # forward/adjoint convolution, PSF apply
   psf/library.py             # Gaussian / motion / defocus PSF generation
   data/degrade.py            # y = Ax + noise, circular boundary
-  protocol/splits.py         # BSDS splits, noise grid, PSF grid
-  metrics/                   # PSNR, SSIM, LPIPS, consistency, PGD
+  data/datasets.py           # BSDS500 loader, patch sampling
+  protocol/config.py         # locked protocol + manifest
+  protocol/splits.py         # splits, validation subset
+  protocol/observations.py   # deterministic eval cells
+  metrics/                   # PSNR, SSIM, LPIPS, consistency
+  evaluation/grid.py         # torch-free grid evaluation, baseline, summaries
+  training/
+    sampler.py               # P1 x noise sampler (k, sigma per patch)
+    trainer.py               # AdamW, cosine, early stopping, checkpoints
+    evaluation.py            # M1/M3 model restorers
   methods/classical/
     wiener.py                # sanity baseline
-    rl.py                    # sanity baseline
+    richardson_lucy.py       # sanity baseline
     fista_tv.py              # core classical
+    tv.py                    # TV operators + ADMM prox
     admm_epll.py             # core classical-ML + K-sweep
-    ksvd.py                  # optional
+    gmm.py                   # EPLL prior (EM, MAP denoiser)
+    ksvd.py                  # optional, not implemented
   methods/direct/
     unet.py                  # minimal M1
-    deepdeblur.py            # historical M1 (optional)
     nafnet.py                # primary M1
+    deepdeblur.py            # historical M1, optional, not implemented
   methods/unrolled/
     lista.py                 # ladder rung 1
     ista_net.py              # ladder rung 2
     usrnet.py                # primary M3
+scripts/
+  setup_datasets.py          # opt-in dataset setup + protocol manifests
+  train_gmm.py               # EPLL prior training
+  train_m1.py                # M1 training
+  train_m3.py                # M3 training
+  eval_m1.py                 # M1-only evaluation
+  evaluate.py                # unified M1/M2/M3 evaluation with baseline
+  run_classical.py           # one-image classical demo
 ```
 
 Build order:
@@ -357,8 +428,11 @@ Build order:
 6. `classical/admm_epll.py` — GMM training (EM) + ADMM loop; add the $K$-sweep.
 7. `direct/unet.py` → `direct/nafnet.py` — M1.
 8. `unrolled/usrnet.py` — M3; then `lista.py`, `ista_net.py` for the ladder.
+9. `evaluation/grid.py` + `scripts/evaluate.py` — paired baseline and the
+   cross-arm comparison table.
 
-After step 6 the study is runnable on CPU, before any GPU training.
+After step 9 the full grid comparison is runnable, including the per-cell
+no-restoration baseline.
 
 ---
 

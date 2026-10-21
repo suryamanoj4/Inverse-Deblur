@@ -25,6 +25,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import numpy as np
 import torch
 
 from deblur.data import BSDS500, load_image
@@ -121,6 +122,11 @@ def main() -> None:
         f"{len(noise_levels)} noise levels, val on {len(val_images)} images "
         f"({len(train_psfs) * len(noise_levels)} cells), device {args.device}, amp {amp}"
     )
+
+    np.random.seed(config.seed)
+    torch.manual_seed(config.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(config.seed)
 
     sampler = PatchSampler(
         images=list(train_set),

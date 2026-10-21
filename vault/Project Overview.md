@@ -76,6 +76,10 @@ The primary M1 is **one model** trained on $P_1$ (4 Gaussian + 8 motion kernels)
 - Unknown real-world degradations (Tier 3).
 - A new architecture in the core study; any follow-up method is motivated by the comparison and reported separately.
 
+**Compute scale**
+
+The core comparison trains three artifacts (NAFNet, the EPLL prior, USRNet); the full study including the $K$-sweep and the per-σ ablation trains about fifteen. The inventory and checkpoint layout are in [[Proposed Approach]] §5.1.
+
 ## 6. Evaluation
 
 Tier 1 uses BSDS500 with the locked PSF sets: $P_1$ (4 Gaussian + 8 motion kernels) for training and in-distribution evaluation, $P_2$-interp (unseen parameters of the same families) and $P_2$-extrap (defocus disks, an unseen family) for kernel mismatch. Noise grid $\sigma \in \{0,1,5,15,25\}/255$, circular boundary handling, luminance images. Metrics: PSNR, SSIM, LPIPS, data-consistency residual, kernel-mismatch PSNR drop, and perturbation stability; paired Wilcoxon tests with multiplicity control. Checkpoint selection uses mean val PSNR over the fixed grid on a 10-image seeded subset of the sorted val list (IDs logged with the protocol); never per-condition selection. The locked protocol is in [[Proposed Approach]] §7.
