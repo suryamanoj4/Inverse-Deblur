@@ -343,7 +343,7 @@ Test PSNR (dB). The λ values tuned for $\sigma=0$ are kept.
 
 - **M2 is given the true $k$ and $\sigma$** (non-blind), and its $\lambda$ is tuned per noise level on val. This is the intended contrast between the arms, not a confound. A blind or estimated-kernel M2 is not evaluated.
 - **M3 (unrolled, physics-aware networks) is not yet trained.** It is needed to separate physics-awareness from prior depth.
-- **H3 (stability under small perturbations) is not evaluated** in this interim report.
+- **H3 (stability under small perturbations) is not yet evaluated.** The transfer-attack script is implemented (`scripts/stability_test.py`); its run is pending.
 - The noise model is synthetic Gaussian with circular boundaries; real blur (GoPro) is not evaluated.
 - Each model was trained once (one seed); differences of a few tenths of a dB between M1 variants should be read with that in mind.
 - LPIPS was not computed for all methods and is omitted.
@@ -362,6 +362,7 @@ Test PSNR (dB). The λ values tuned for $\sigma=0$ are kept.
 | EPLL/GMM prior | `scripts/train_gmm.py` |
 | M3 training (USRNet / ISTA-Net / LISTA) | `scripts/train_m3.py`, `src/deblur/methods/unrolled/` |
 | Unified evaluation | `scripts/evaluate.py` (M2 GPU backend: `--m2-backend torch`) |
+| H3 stability (transfer attack) | `scripts/stability_test.py`, `src/deblur/metrics/stability.py` |
 | Tables and statistics | `scripts/analyze_m1_m2.py` |
 | Aggregated results | `report/generated/numbers.json`, `psnr_P1.dat`, `psnr_P2_interp.dat`, `psnr_P2_extrap.dat`, `ksweep.dat` |
 | Qualitative crops | `report/generated/qualitative/` |
@@ -379,7 +380,7 @@ The raw per-cell evaluation CSVs and the `sigma0_quantized` CSVs used by `script
 
 - **M1 + M2:** complete interim comparison, reported above.
 - **M3:** implemented, not trained; the three-arm control is pending.
-- **H3:** stability experiment pending.
+- **H3:** transfer-attack script implemented (`scripts/stability_test.py`); run pending.
 - **σ=0:** excluded from headline averages; 8-bit check reported. Future runs should quantize observations or add a noise floor to the protocol.
 
 ---

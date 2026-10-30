@@ -286,6 +286,9 @@ Evaluation artifacts land in `artifacts/eval/` (CSV, summary JSON, metadata JSON
 - **H2 — Prior depth matters most on texture.** On piecewise-constant content M2 is competitive; on natural texture the deep-prior arms (M1, M3) win. The $K$-sweep tests the same claim from the classical side.
 - **H3 — A-awareness buys stability.** M1 is unstable under tiny perturbations while the physics-aware arms resist them (Antun et al., PNAS 2020; tested here in the convolution regime). This is the study's headline result.
 
+> [!note] H3 implementation
+> `scripts/stability_test.py` runs a **transfer attack**: white-box PGD on M1 (or M3 with `--attack-arm m3`) finds a small observation perturbation, then every available arm is evaluated on the same perturbed inputs. This tests whether a perturbation that breaks the data-only model also breaks the physics-aware arms. Per-method white-box attacks for M2 need a gradient-enabled FISTA/EPLL and are a follow-up; the current result must be labelled as a transfer attack.
+
 ---
 
 ## 7. Datasets, splits, and protocol (locked)
@@ -351,6 +354,7 @@ membership, sampling policy, checkpoint rule, and learned-arm hyperparameters.
 | 8 | unrolled arm (`unrolled/usrnet.py`, `unrolled/ista_net.py`, `unrolled/lista.py`, `scripts/train_m3.py`) | ✅ implemented + tested (torch-guarded); training pending |
 | 9 | unified evaluation (`evaluation/`, `scripts/evaluate.py`) with paired per-cell baseline | ✅ implemented + tested |
 | 10 | interim report (`report/m1_m2_comparison.md`, `report/generated/`) | ✅ M1/M2 results; M3 and H3 pending |
+| H3 | stability (`metrics/stability.py`, `scripts/stability_test.py`) | ✅ implemented (transfer attack); run pending |
 
 ---
 
@@ -388,6 +392,7 @@ src/
   protocol/splits.py         # splits, validation subset
   protocol/observations.py   # deterministic eval cells
   metrics/                   # PSNR, SSIM, LPIPS, consistency
+  metrics/stability.py       # L2 projection + PGD attack for H3
   evaluation/grid.py         # torch-free grid evaluation, baseline, summaries
   training/
     sampler.py               # P1 x noise sampler (k, sigma per patch)
@@ -416,6 +421,7 @@ scripts/
   train_m3.py                # M3 training
   eval_m1.py                 # M1-only evaluation
   evaluate.py                # unified M1/M2/M3 evaluation with baseline
+  stability_test.py          # H3 transfer attack (PGD on M1, evaluate all arms)
   run_classical.py           # one-image classical demo
 ```
 

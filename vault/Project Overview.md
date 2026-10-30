@@ -114,4 +114,5 @@ Full bibliography: [[Proposed Approach]] §12.
 
 Active. M1 and M2 have a complete interim comparison, reported in
 `report/m1_m2_comparison.md`. The M3 arm (USRNet / ISTA-Net / LISTA) is
-implemented but not yet trained, and the stability experiment (H3) is pending.
+implemented but not yet trained. The H3 stability experiment is implemented as a
+transfer attack (`scripts/stability_test.py`); its run is pending.

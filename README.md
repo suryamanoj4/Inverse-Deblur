@@ -76,7 +76,8 @@ Only M1 and M3 train end-to-end networks; M2 learns a prior and runs a per-image
 │   ├── train_m1.py      # train an M1 network under the locked protocol
 │   ├── train_m3.py      # train an M3 network (USRNet / ISTA-Net / LISTA)
 │   ├── eval_m1.py       # M1-only evaluation (kept for compatibility)
-│   └── evaluate.py      # unified M1/M2/M3 evaluation with per-cell baseline
+│   ├── evaluate.py      # unified M1/M2/M3 evaluation with per-cell baseline
+│   └── stability_test.py # H3 transfer attack: PGD on M1, evaluate all arms
 ├── report/              # interim M1/M2 report + generated data/figures
 └── vault/               # design notes (Obsidian)
     ├── Project Overview.md
@@ -216,6 +217,24 @@ Each run writes a CSV with `psnr`, `baseline_psnr`, `gain`, `ssim`,
 (PSF set, kernel kind, σ), and a metadata JSON with the protocol manifest. The
 M2 path does not require PyTorch.
 
+## Stability (H3)
+
+`scripts/stability_test.py` runs a transfer attack: white-box PGD on M1 finds a
+small perturbation of the observation, then every available arm is evaluated on
+the same perturbed inputs.
+
+```bash
+python3 scripts/stability_test.py --data-root data \
+  --m1-checkpoint checkpoints/m1/nafnet/best.pt \
+  --gmm checkpoints/m2/epll_gmm_K200.npz \
+  --psf-set P1 --sigmas 1,15 --eps 0.005,0.01,0.02 --limit 10
+```
+
+The script writes a CSV with clean/adversarial PSNR, the PSNR drop, SSIM, the
+data-consistency residual and the perturbation norm, plus a summary and a
+metadata JSON. Pass `--m3-checkpoint` to include M3. M2 is transfer-evaluated;
+a per-method white-box attack for M2 requires a gradient-enabled solver.
+
 ## Status
 
 All three arms are implemented. M1 and M2 have a complete interim comparison,
@@ -228,8 +247,10 @@ reported in [`report/m1_m2_comparison.md`](report/m1_m2_comparison.md):
   evaluator; **implemented but not yet trained**.
 
 The interim results confirm the predicted kernel-mismatch failure on unseen
-motion and defocus, with paired tests and a per-cell baseline. The three-arm
-control (M3) and the stability experiment (H3) are the remaining experiments.
+motion and defocus, with paired tests and a per-cell baseline. The H3 stability
+script is implemented (`scripts/stability_test.py`); its transfer-attack run is
+pending. The three-arm control (M3) and the H3 run are the remaining
+experiments.
 
 Install the learned-arm dependencies (PyTorch and LPIPS) with
 `pip install -r requirements.txt`; for a CPU-only PyTorch wheel, use the
