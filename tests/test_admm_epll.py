@@ -31,9 +31,7 @@ class TestADMMEPLL(unittest.TestCase):
             self.k,
             self.gmm,
             sigma=0.05,
-            lam=1e-3,
             n_iter=4,
-            beta_max=1e2,
             patch_size=6,
             stride=2,
         )
@@ -48,9 +46,7 @@ class TestADMMEPLL(unittest.TestCase):
             self.k,
             self.gmm,
             sigma=0.05,
-            lam=1e-3,
             n_iter=2,
-            beta_max=1e2,
             patch_size=6,
             stride=2,
         )
@@ -62,7 +58,15 @@ class TestADMMEPLL(unittest.TestCase):
         with self.assertRaises(ValueError):
             admm_epll(y, self.k, self.gmm, n_iter=0)
         with self.assertRaises(ValueError):
-            admm_epll(y, self.k, self.gmm, beta0=10.0, beta_max=1.0)
+            admm_epll(y, self.k, self.gmm, sigma_start=0.0)
+        with self.assertRaises(ValueError):
+            admm_epll(y, self.k, self.gmm, lam=0.0)
+
+    def test_noiseless_inverts_blur(self):
+        # With no noise the early, weakly weighted x-updates must undo the blur.
+        y = degrade(self.x, self.k, sigma=0.0)
+        restored = admm_epll(y, self.k, self.gmm, sigma=0.0, n_iter=8, patch_size=6, stride=2)
+        self.assertGreater(psnr(self.x, restored), psnr(self.x, y) + 5.0)
 
 
 if __name__ == "__main__":

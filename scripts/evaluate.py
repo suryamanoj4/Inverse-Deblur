@@ -15,8 +15,13 @@ Examples:
     python scripts/evaluate.py --arm m2 --data-root data --method fista_tv \
         --lambda 0.0001,0.0005,0.001,0.002,0.003
     python scripts/evaluate.py --arm m2 --data-root data --method admm_epll \
-        --gmm checkpoints/epll_gmm.npz --lambda 0.001,0.003,0.01,0.03,0.1 \
-        --stride 2 --limit 20
+        --gmm checkpoints/epll_gmm.npz --stride 2 --limit 20
+    # seeded 50-image test subset, split across 12 processes (shard 3 of 12)
+    python scripts/evaluate.py --arm m2 --data-root data --method fista_tv \
+        --subset 50 --shard 3/12 --out artifacts/eval/m2_fista_tv/shard03.csv
+    # FISTA-TV and ADMM-EPLL on the GPU (same solvers, torch arithmetic)
+    python scripts/evaluate.py --arm m2 --data-root data --method admm_epll \
+        --gmm checkpoints/m2/gmm_K200.npz --m2-backend torch --stride 1
 """
 
 import argparse
@@ -24,7 +29,10 @@ import csv
 import json
 import subprocess
 import sys
+from functools import partial
 from pathlib import Path
+
+import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,7 +48,7 @@ from deblur.methods.classical import (
     suggest_tv_lambda,
     wiener,
 )
-from deblur.protocol import ProtocolConfig
+from deblur.protocol import ProtocolConfig, validation_subset
 from deblur.psf import protocol_psf_sets
 
 M2_METHODS = ("wiener", "richardson_lucy", "fista_tv", "admm_epll")
@@ -87,6 +95,15 @@ def build_restorer(args, config: ProtocolConfig, device):
     if args.arm == "m2":
         if args.method not in M2_METHODS:
             raise SystemExit(f"--method must be one of {M2_METHODS}")
+        torch_backend = args.m2_backend == "torch"
+        if torch_backend:
+            if args.method not in ("fista_tv", "admm_epll"):
+                raise SystemExit("--m2-backend torch supports fista_tv and admm_epll")
+            from deblur.methods.classical.torch_backend import (
+                TorchGMM,
+                admm_epll_torch,
+                fista_tv_torch,
+            )
         lambdas = parse_values(args.lambda_values)
         steps = args.steps
         if args.method == "wiener":
@@ -100,7 +117,10 @@ def build_restorer(args, config: ProtocolConfig, device):
         elif args.method == "fista_tv":
             def restore_fn(y, psf, sigma):
                 lam = resolve_per_sigma(lambdas, sigma, config.noise_levels)
-                return fista_tv(
+                solver = (
+                    partial(fista_tv_torch, device=device) if torch_backend else fista_tv
+                )
+                return solver(
                     y,
                     psf.kernel,
                     lam=suggest_tv_lambda(sigma) if lam is None else lam,
@@ -111,10 +131,13 @@ def build_restorer(args, config: ProtocolConfig, device):
             if args.gmm is None:
                 raise SystemExit("admm_epll needs --gmm (train it with scripts/train_gmm.py)")
             gmm = GMM.load(args.gmm)
+            solver = admm_epll
+            if torch_backend:
+                gmm, solver = TorchGMM(gmm, device=device), admm_epll_torch
 
             def restore_fn(y, psf, sigma):
                 lam = resolve_per_sigma(lambdas, sigma, config.noise_levels)
-                return admm_epll(
+                return solver(
                     y,
                     psf.kernel,
                     gmm,
@@ -124,7 +147,13 @@ def build_restorer(args, config: ProtocolConfig, device):
                     patch_size=8,
                     stride=args.stride,
                 )
-        return restore_fn, {"arm": "M2", "method": args.method, "gmm": args.gmm}
+        return restore_fn, {
+            "arm": "M2",
+            "method": args.method,
+            "gmm": args.gmm,
+            "backend": args.m2_backend,
+            "stride": args.stride if args.method == "admm_epll" else None,
+        }
 
     if args.checkpoint is None:
         raise SystemExit(f"--checkpoint is required for --arm {args.arm}")
@@ -176,10 +205,19 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=None, help="solver/unrolled iteration override")
     parser.add_argument("--inner-steps", type=int, default=None, help="M2 FISTA TV inner iterations")
     parser.add_argument("--stride", type=int, default=2, help="M2 EPLL patch stride (1 is slowest)")
+    parser.add_argument("--m2-backend", default="numpy", choices=["numpy", "torch"],
+                        help="M2: run fista_tv/admm_epll with NumPy (CPU) or torch (--device)")
+    parser.add_argument("--quantize-input", action="store_true",
+                        help="round observations to 8-bit levels before restoring (inverse-crime check)")
+    parser.add_argument("--sigmas", default=None,
+                        help="comma-separated subset of the noise grid, in /255 units (default: all)")
     parser.add_argument("--psf-sets", default=None, help="comma-separated (default: protocol eval sets)")
     parser.add_argument("--limit", type=int, default=None, help="first N images only")
+    parser.add_argument("--subset", type=int, default=None,
+                        help="seeded N-image subset of the split (val: --subset 10 is the protocol val subset)")
+    parser.add_argument("--shard", default=None, help="INDEX/COUNT: evaluate every COUNT-th image from INDEX")
     parser.add_argument("--lpips", action="store_true", help="also compute LPIPS")
-    parser.add_argument("--device", default=None, help="M1/M3 device (default: cuda if available)")
+    parser.add_argument("--device", default=None, help="M1/M3 and torch-backend M2 device (default: cuda if available)")
     parser.add_argument("--out", default=None, help="CSV path")
     args = parser.parse_args()
 
@@ -195,10 +233,24 @@ def main() -> None:
     config = ProtocolConfig(data_root=args.data_root)
     dataset = BSDS500(config.data_root, split=args.split, luminance=config.luminance)
     paths = dataset.paths[: args.limit] if args.limit else dataset.paths
+    if args.subset:
+        paths = validation_subset(paths, size=args.subset, seed=config.val_subset_seed)
+    if args.shard:
+        index, count = (int(part) for part in args.shard.split("/"))
+        if not 0 <= index < count:
+            raise SystemExit("--shard needs 0 <= INDEX < COUNT")
+        paths = sorted(paths)[index::count]
     images = [
         (p.relative_to(dataset.image_root).as_posix(), load_image(p, luminance=config.luminance))
         for p in paths
     ]
+
+    noise_levels = config.noise_levels
+    if args.sigmas:
+        wanted = [float(v) / 255.0 for v in args.sigmas.split(",")]
+        noise_levels = tuple(l for l in config.noise_levels if any(abs(l - w) < 1e-9 for w in wanted))
+        if len(noise_levels) != len(wanted):
+            raise SystemExit(f"--sigmas must be on the noise grid {config.noise_levels_over_255}")
 
     set_names = args.psf_sets.split(",") if args.psf_sets else list(config.eval_psf_sets)
     psf_sets = protocol_psf_sets()
@@ -207,6 +259,9 @@ def main() -> None:
         raise SystemExit(f"unknown PSF sets {sorted(unknown)}; choose from {sorted(psf_sets)}")
 
     restore_fn, arm_meta = build_restorer(args, config, device)
+    if args.quantize_input:
+        unquantized = restore_fn
+        restore_fn = lambda y, psf, sigma: unquantized(np.round(y * 255.0) / 255.0, psf, sigma)
     lpips_metric = None
     if args.lpips:
         from deblur.metrics import LPIPSMetric
@@ -218,19 +273,19 @@ def main() -> None:
         psfs = psf_sets[set_name]
         print(
             f"{set_name}: {len(images)} images x {len(psfs)} PSFs x "
-            f"{len(config.noise_levels)} noise levels"
+            f"{len(noise_levels)} noise levels"
         )
         set_rows = evaluate_grid(
             restore_fn,
             images,
             psfs,
-            config.noise_levels,
+            noise_levels,
             seed=config.seed,
             full_metrics=True,
             lpips_metric=lpips_metric,
         )
         baseline_rows = evaluate_grid(
-            identity_restorer, images, psfs, config.noise_levels, seed=config.seed
+            identity_restorer, images, psfs, noise_levels, seed=config.seed
         )
         merge_baseline(set_rows, baseline_rows)
         for row in set_rows:
@@ -268,8 +323,14 @@ def main() -> None:
         "arm": arm_meta,
         "split": args.split,
         "limit": args.limit,
+        "subset": args.subset,
+        "subset_seed": config.val_subset_seed if args.subset else None,
+        "shard": args.shard,
+        "images": [image_id for image_id, _ in images],
         "psf_sets": set_names,
         "lambda_values": parse_values(args.lambda_values),
+        "quantize_input": args.quantize_input,
+        "sigmas_255": [round(l * 255.0, 6) for l in noise_levels],
         "seed": config.seed,
         "protocol": config.manifest(),
         "git_commit": git_commit(),
