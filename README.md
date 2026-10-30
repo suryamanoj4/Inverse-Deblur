@@ -77,6 +77,7 @@ Only M1 and M3 train end-to-end networks; M2 learns a prior and runs a per-image
 │   ├── train_m3.py      # train an M3 network (USRNet / ISTA-Net / LISTA)
 │   ├── eval_m1.py       # M1-only evaluation (kept for compatibility)
 │   └── evaluate.py      # unified M1/M2/M3 evaluation with per-cell baseline
+├── report/              # interim M1/M2 report + generated data/figures
 └── vault/               # design notes (Obsidian)
     ├── Project Overview.md
     └── Proposed Approach.md
@@ -217,18 +218,18 @@ M2 path does not require PyTorch.
 
 ## Status
 
-All three arms are implemented and tested:
+All three arms are implemented. M1 and M2 have a complete interim comparison,
+reported in [`report/m1_m2_comparison.md`](report/m1_m2_comparison.md):
 
 - **M2:** Wiener, Richardson–Lucy, FISTA-TV, EPLL/GMM + ADMM-EPLL.
 - **M1:** NAFNet and U-Net, protocol sampler, training loop, checkpoint
   selection, grid evaluation.
 - **M3:** USRNet, ISTA-Net and LISTA, sharing the same sampler, trainer and
-  evaluator.
+  evaluator; **implemented but not yet trained**.
 
-Preliminary M1 test results show the predicted kernel-mismatch failure on
-unseen motion and defocus. They are not final until the protocol-locked run is
-scored with the paired per-cell baseline and paired statistical tests. Next:
-the full M1/M3 runs, M2 λ tuning on validation, and the comparison table.
+The interim results confirm the predicted kernel-mismatch failure on unseen
+motion and defocus, with paired tests and a per-cell baseline. The three-arm
+control (M3) and the stability experiment (H3) are the remaining experiments.
 
 Install the learned-arm dependencies (PyTorch and LPIPS) with
 `pip install -r requirements.txt`; for a CPU-only PyTorch wheel, use the

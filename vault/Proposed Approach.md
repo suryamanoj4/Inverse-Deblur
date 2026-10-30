@@ -347,9 +347,10 @@ membership, sampling policy, checkpoint rule, and learned-arm hyperparameters.
 | 3 | `data/degrade.py`, `data/datasets.py`, `protocol/` | ✅ implemented + tested |
 | 3 | `metrics/` (PSNR, SSIM, consistency) | ✅ implemented + tested; LPIPS optional |
 | 4–6 | classical arm (`wiener`, `richardson_lucy`, `fista_tv`, `admm_epll`, `gmm`) | ✅ implemented + tested |
-| 7 | direct arm (`direct/nafnet.py`, `direct/unet.py`, `training/`, `scripts/train_m1.py`, `scripts/eval_m1.py`) | ✅ implemented + tested; preliminary run reported, protocol-locked run pending |
-| 8 | unrolled arm (`unrolled/usrnet.py`, `unrolled/ista_net.py`, `unrolled/lista.py`, `scripts/train_m3.py`) | ✅ implemented + tested (torch-guarded) |
+| 7 | direct arm (`direct/nafnet.py`, `direct/unet.py`, `training/`, `scripts/train_m1.py`, `scripts/eval_m1.py`) | ✅ implemented + tested; M1/M2 interim results in `report/m1_m2_comparison.md` |
+| 8 | unrolled arm (`unrolled/usrnet.py`, `unrolled/ista_net.py`, `unrolled/lista.py`, `scripts/train_m3.py`) | ✅ implemented + tested (torch-guarded); training pending |
 | 9 | unified evaluation (`evaluation/`, `scripts/evaluate.py`) with paired per-cell baseline | ✅ implemented + tested |
+| 10 | interim report (`report/m1_m2_comparison.md`, `report/generated/`) | ✅ M1/M2 results; M3 and H3 pending |
 
 ---
 
