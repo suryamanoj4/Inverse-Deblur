@@ -287,7 +287,51 @@ Evaluation artifacts land in `artifacts/eval/` (CSV, summary JSON, metadata JSON
 - **H3 — A-awareness buys stability.** M1 is unstable under tiny perturbations while the physics-aware arms resist them (Antun et al., PNAS 2020; tested here in the convolution regime). This is the study's headline result.
 
 > [!note] H3 implementation
-> `scripts/stability_test.py` runs a **transfer attack**: white-box PGD on M1 (or M3 with `--attack-arm m3`) finds a small observation perturbation, then every available arm is evaluated on the same perturbed inputs. This tests whether a perturbation that breaks the data-only model also breaks the physics-aware arms. Per-method white-box attacks for M2 need a gradient-enabled FISTA/EPLL and are a follow-up; the current result must be labelled as a transfer attack.
+> See §6.1. The current script runs a **transfer attack**; a per-method white-box M2 attack is a follow-up.
+
+### 6.1 H3 stability experiment (implemented)
+
+**Protocol.** The current implementation is a *transfer attack*:
+
+1. White-box PGD on the attack arm (M1 by default, or M3 with `--attack-arm m3`) finds a perturbation $\eta$ with $\lVert\eta\rVert_2 \le \epsilon\lVert y\rVert_2$ that maximizes the reconstruction error.
+2. Every available arm (M1, M2, optional M3) is evaluated on the same $y+\eta$.
+3. Sweep $\epsilon$ over a fixed image/PSF/σ subset. $\sigma=0$ is excluded (inverse crime; see §7).
+
+This tests whether a perturbation that breaks the data-only model also breaks the physics-aware arms. It does **not** find M2's own worst-case perturbation; a per-method white-box M2 attack requires a gradient-enabled FISTA/EPLL and is a follow-up.
+
+**Command.**
+
+```bash
+python3 scripts/stability_test.py --data-root data \
+  --m1-checkpoint checkpoints/m1/nafnet/best.pt \
+  --gmm checkpoints/m2/epll_gmm_K200.npz \
+  --psf-set P1 --sigmas 1,15 --eps 0.005,0.01,0.02 --limit 10
+```
+
+**Key options.**
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--psf-set` | `P1` | `P1`, `P2_interp` or `P2_extrap` |
+| `--psf-limit` | `2` | first N kernels of the set |
+| `--sigmas` | `1,15` | noise levels in `/255`; σ=0 is rejected |
+| `--limit` | `10` | first N images of the split |
+| `--eps` | `0.005,0.01,0.02` | relative L2 budgets |
+| `--steps` | `20` | PGD iterations |
+| `--step-scale` | `2.0` | step = scale × radius / steps |
+| `--attack-arm` | `m1` | `m1` or `m3` |
+| `--m1-checkpoint` | `checkpoints/m1/nafnet/best.pt` | M1 checkpoint |
+| `--m3-checkpoint` | none | include M3 in the evaluation |
+| `--m2-method` | `admm_epll` | `admm_epll` or `fista_tv` |
+| `--gmm` | none | EPLL prior; required for `admm_epll` |
+| `--lambda-values` | none | one value or one per noise level |
+| `--m2-steps` | 10 (EPLL) / 100 (FISTA) | solver iterations |
+| `--stride` | `1` | EPLL patch stride |
+| `--out` | `artifacts/stability/...` | CSV path |
+
+**Outputs.** `*_summary.json` gives mean clean PSNR, adversarial PSNR, drop, $\lVert\eta\rVert/\lVert y\rVert$, SSIM and residual by (method, σ, ε). `*_metadata.json` records the checkpoints, attack settings, protocol and git commit.
+
+**Interpretation.** A positive `drop` at a small ε that is much larger for M1 than M2/M3 supports H3. Because this is a transfer attack, report it as such; it is not a per-method worst-case bound.
 
 ---
 

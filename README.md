@@ -235,6 +235,22 @@ data-consistency residual and the perturbation norm, plus a summary and a
 metadata JSON. Pass `--m3-checkpoint` to include M3. M2 is transfer-evaluated;
 a per-method white-box attack for M2 requires a gradient-enabled solver.
 
+**Key options** (full table in `vault/Proposed Approach.md` §6.1):
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--psf-set` / `--psf-limit` | `P1` / `2` | which kernels and how many |
+| `--sigmas` | `1,15` | noise levels in `/255`; σ=0 rejected |
+| `--limit` | `10` | first N images |
+| `--eps` | `0.005,0.01,0.02` | relative L2 budgets |
+| `--attack-arm` | `m1` | `m1` or `m3` |
+| `--m2-method` / `--gmm` | `admm_epll` / none | M2 solver and EPLL prior |
+| `--lambda-values` | none | one value or one per noise level |
+| `--m3-checkpoint` | none | include M3 |
+
+Outputs land in `artifacts/stability/`: CSV rows, `*_summary.json` and
+`*_metadata.json`.
+
 ## Status
 
 All three arms are implemented. M1 and M2 have a complete interim comparison,

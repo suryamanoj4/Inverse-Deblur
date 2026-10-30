@@ -363,6 +363,20 @@ Test PSNR (dB). The λ values tuned for $\sigma=0$ are kept.
 | M3 training (USRNet / ISTA-Net / LISTA) | `scripts/train_m3.py`, `src/deblur/methods/unrolled/` |
 | Unified evaluation | `scripts/evaluate.py` (M2 GPU backend: `--m2-backend torch`) |
 | H3 stability (transfer attack) | `scripts/stability_test.py`, `src/deblur/metrics/stability.py` |
+
+H3 is not yet run. The command is:
+
+```bash
+python3 scripts/stability_test.py --data-root data \
+  --m1-checkpoint checkpoints/m1/nafnet/best.pt \
+  --gmm checkpoints/m2/epll_gmm_K200.npz \
+  --psf-set P1 --sigmas 1,15 --eps 0.005,0.01,0.02 --limit 10
+```
+
+The script runs white-box PGD on M1 (or M3 with `--attack-arm m3`) and evaluates
+every available arm on the same perturbed observations. It is a transfer attack,
+not a per-method white-box attack for M2. Full options are in
+`vault/Proposed Approach.md` §6.1.
 | Tables and statistics | `scripts/analyze_m1_m2.py` |
 | Aggregated results | `report/generated/numbers.json`, `psnr_P1.dat`, `psnr_P2_interp.dat`, `psnr_P2_extrap.dat`, `ksweep.dat` |
 | Qualitative crops | `report/generated/qualitative/` |
