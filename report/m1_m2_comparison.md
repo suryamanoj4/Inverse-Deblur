@@ -24,7 +24,7 @@ tags:
 
 ## Abstract
 
-We compare a data-only deep network (M1, NAFNet) against physics-aware classical-ML solvers that know the blur kernel and noise level (M2, led by ADMM with an EPLL Gaussian-mixture prior) on BSDS500 under a single locked protocol: the same images, kernels, noise levels and seeded observations for every method. On the training kernels the two arms are close: NAFNet leads by 0.2–0.5 dB for σ ≥ 5/255, while EPLL leads by 0.9 dB at σ = 1/255. Under kernel mismatch the picture changes. On unseen motion and Gaussian parameters NAFNet loses 2.9 dB on average and EPLL 0.35 dB, and EPLL wins every noise level, by up to 6.4 dB. A per-noise-level ablation shows that knowing σ is worth at most 0.25 dB to NAFNet, so its deficit comes from not knowing the kernel. We also show that the noiseless (σ = 0) condition is an inverse crime that inflates physics-aware results to 80–100 dB, which disappears once observations are quantized to 8 bits. The unrolled arm (M3) is deferred and not reported here.
+We compare a data-only deep network (M1, NAFNet) against physics-aware classical-ML solvers that know the blur kernel and noise level (M2, led by ADMM with an EPLL Gaussian-mixture prior) on BSDS500 under a single locked protocol: the same images, kernels, noise levels and seeded observations for every method. On the training kernels the two arms are close: NAFNet leads by 0.2–0.5 dB for σ ≥ 5/255, while EPLL leads by 0.9 dB at σ = 1/255. Under kernel mismatch the picture changes. On unseen motion and Gaussian parameters NAFNet loses 2.9 dB on average and EPLL 0.35 dB, and EPLL wins every noise level, by up to 6.4 dB. A per-noise-level ablation shows that knowing σ is worth at most 0.25 dB to NAFNet, so its deficit comes from not knowing the kernel. We also show that the noiseless (σ = 0) condition is an inverse crime that inflates physics-aware results to 80–100 dB, which disappears once observations are quantized to 8 bits. Three further experiments refine the picture. Under a transfer attack (a perturbation optimised against NAFNet), ADMM-EPLL loses 2–17 times less PSNR than NAFNet at σ ≥ 5/255, but it is not more stable at σ = 1/255, where its almost unregularised λ amplifies the perturbation. Perceptually (LPIPS), M1 is clearly better in distribution even where PSNR is tied, while under mismatch the physics-aware TV solver is perceptually best at almost every noise level. Contrary to our hypothesis H2, the deep network's in-distribution advantage comes from smooth images, not textured ones. The unrolled arm (M3) is deferred and not reported here.
 
 ---
 
@@ -81,7 +81,7 @@ The regularisation weight $\lambda$ of FISTA-TV and ADMM-EPLL is tuned per noise
 
 ### 1.6 Metrics and statistics
 
-PSNR and SSIM against the sharp image, and the data-consistency residual $\mathrm{RMSE}(k * \hat{x} - y)$.
+PSNR and SSIM against the sharp image, and the data-consistency residual $\mathrm{RMSE}(k * \hat{x} - y)$. LPIPS (AlexNet; grayscale replicated to three channels) is reported on a seeded 50-image test subset (Section 8). Stability under small perturbations (H3) is measured with a transfer attack (Section 7).
 
 Paired comparisons use the image as the unit: each image's PSNR is averaged over the PSFs of a set, giving 200 pairs per (set, σ). We report the mean and median difference, the fraction of images won, and Wilcoxon signed-rank p-values with Holm correction over all 30 tests.
 
@@ -89,7 +89,7 @@ Paired comparisons use the image as the unit: each image's PSNR is averaged over
 
 ## 2. Main results
 
-Table 1 and Figure 1 give PSNR for every method, PSF set and noise level $\sigma>0$. Table 2 gives SSIM. $\sigma=0$ is treated separately in Section 6.
+Table 1 and Figure 1 give PSNR for every method, PSF set and noise level $\sigma>0$. Table 2 gives SSIM. $\sigma=0$ is treated separately in Section 9.
 
 ### Table 1 — Mean test PSNR (dB)
 
@@ -308,7 +308,110 @@ Capacity helps quickly and then saturates. Going from a single Gaussian ($K=1$, 
 
 ---
 
-## 6. The noiseless case is an inverse crime
+## 6. Texture (H2)
+
+**Hypothesis H2:** prior depth matters most on texture. On piecewise-constant content M2 should be competitive, and on natural texture the deep-prior arms should win.
+
+Each test image gets one texture score, the mean gradient magnitude of its sharp luminance image. The 200 test images are split into terciles (edges 0.034 and 0.048). For every method, PSNR is averaged per image over the PSFs of a set and over $\sigma>0$. The paired difference NAFNet − ADMM-EPLL (deep vs. shallow learned prior) is related to texture by Spearman correlation over the 200 images.
+
+### Table 9 — Mean test PSNR (dB) by texture tercile (mean over σ > 0)
+
+| Set | Texture | Blurred | FISTA-TV | ADMM-EPLL | U-Net | NAFNet | NAFNet − EPLL | EPLL − FISTA |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| $P_1$ | low | 23.95 | 29.40 | 30.19 | 29.63 | 30.34 | +0.15 | +0.80 |
+|  | medium | 22.11 | 26.65 | 27.33 | 26.71 | 27.38 | +0.05 | +0.68 |
+|  | high | 20.22 | 24.10 | 24.72 | 24.02 | 24.67 | -0.04 | +0.62 |
+| $P_2$-interp | low | 23.71 | 29.16 | 29.88 | 27.38 | 27.47 | -2.41 | +0.72 |
+|  | medium | 21.85 | 26.34 | 26.99 | 24.35 | 24.41 | -2.58 | +0.65 |
+|  | high | 19.94 | 23.71 | 24.33 | 21.68 | 21.79 | -2.53 | +0.62 |
+| $P_2$-extrap | low | 22.71 | 27.56 | 28.24 | 26.13 | 26.16 | -2.08 | +0.69 |
+|  | medium | 20.76 | 24.57 | 25.26 | 23.09 | 23.13 | -2.14 | +0.69 |
+|  | high | 18.85 | 21.93 | 22.59 | 20.44 | 20.50 | -2.08 | +0.66 |
+
+| Set | Spearman ρ (texture, NAFNet − EPLL) | p | low vs high tercile, Mann–Whitney p |
+|---|---:|---:|---:|
+| $P_1$ | -0.545 | 7.7e-17 | 2.2e-12 |
+| $P_2$-interp | -0.086 | 0.23 | 0.15 |
+| $P_2$-extrap | +0.027 | 0.7 | 0.93 |
+
+- **In distribution, the deep prior's advantage comes from smooth images.** NAFNet leads ADMM-EPLL by 0.15 dB on low-texture images and trails it by 0.04 dB on high-texture ones. The trend is strong and significant (ρ = −0.55, $p\approx10^{-16}$). This is the opposite of H2.
+- **The learned GMM's margin over TV also shrinks slightly with texture** (+0.80 → +0.62 dB on $P_1$), again against H2's prediction for the classical prior ladder.
+- **Under kernel mismatch, texture plays no role.** The 2.1–2.6 dB deficit of NAFNet is the same in every tercile ($p=0.23$ and $0.7$).
+
+**Verdict:** H2 is not supported for M1 vs. M2. Mean gradient magnitude is a simple texture measure, and M3 (the other deep-prior arm) is not trained, so this is a statement about the arms tested here.
+
+---
+
+## 7. Stability under small perturbations (H3)
+
+**Hypothesis H3:** A-awareness buys stability. M1 should be unstable under tiny perturbations, while the physics-aware arms resist them.
+
+**Protocol (transfer attack).** For each cell, 20 steps of white-box PGD on NAFNet find a perturbation $\eta$ with $\lVert\eta\rVert_2\le\epsilon\lVert y\rVert_2$ that maximises NAFNet's reconstruction error. ADMM-EPLL (tuned λ) then restores the *same* perturbed observation $y+\eta$. Setup: the first 10 test images, every kernel of each set, $\sigma\in\{1,5,15,25\}/255$ and $\epsilon\in\{0.5,1,2\}\%$, giving 3,240 attacked cells. Script: `scripts/stability_test.py`.
+
+### Table 10 — PSNR drop (dB) under the NAFNet-optimised perturbation
+
+“Clean” is the unperturbed PSNR on the same cells. The last column is the share of cells (image × PSF × ε) where ADMM-EPLL loses less than NAFNet.
+
+| Set | σ | NAFNet clean | EPLL clean | NAFNet drop ε=0.5% | ε=1% | ε=2% | EPLL drop ε=0.5% | ε=1% | ε=2% | EPLL drops less (cells) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| $P_1$ | 1 | 30.89 | 31.78 | 9.84 | 13.08 | 16.31 | 5.59 | 10.13 | 15.03 | 92% |
+| $P_1$ | 5 | 27.99 | 27.81 | 4.11 | 8.55 | 12.48 | 1.34 | 2.82 | 5.89 | 99% |
+| $P_1$ | 15 | 25.92 | 25.57 | 1.36 | 3.46 | 7.38 | 0.40 | 0.90 | 2.04 | 100% |
+| $P_1$ | 25 | 24.98 | 24.59 | 0.85 | 2.23 | 5.19 | 0.21 | 0.42 | 0.98 | 100% |
+| $P_2$-interp | 1 | 25.00 | 31.10 | 5.37 | 7.14 | 9.62 | 3.34 | 8.27 | 14.33 | 38% |
+| $P_2$-interp | 5 | 24.94 | 27.46 | 2.99 | 5.63 | 8.83 | 0.42 | 1.27 | 3.25 | 99% |
+| $P_2$-interp | 15 | 24.69 | 25.36 | 1.57 | 3.30 | 6.21 | 0.09 | 0.28 | 1.03 | 100% |
+| $P_2$-interp | 25 | 24.28 | 24.44 | 0.94 | 2.15 | 4.74 | 0.10 | 0.19 | 0.50 | 100% |
+| $P_2$-extrap | 1 | 23.17 | 28.73 | 4.83 | 7.25 | 9.50 | 3.35 | 8.08 | 13.21 | 41% |
+| $P_2$-extrap | 5 | 23.93 | 25.59 | 3.03 | 5.27 | 8.16 | 0.24 | 1.30 | 3.42 | 100% |
+| $P_2$-extrap | 15 | 23.69 | 24.11 | 1.26 | 2.81 | 5.58 | 0.08 | 0.17 | 0.72 | 100% |
+| $P_2$-extrap | 25 | 23.37 | 23.51 | 0.78 | 1.78 | 4.12 | 0.10 | 0.18 | 0.38 | 100% |
+
+Perturbation size (mean RMS, /255 units): ε=0.5% → 0.64, ε=1% → 1.27, ε=2% → 2.51.
+
+- **At σ ≥ 5/255, H3 holds clearly.** ADMM-EPLL loses 2–17 times less PSNR than NAFNet under the same perturbation (e.g. 0.28 vs. 3.30 dB on $P_2$-interp at σ = 15, ε = 1%), and loses less in 99–100% of cells.
+- **At σ = 1/255 it does not.** The smallest perturbation (0.64/255 RMS) is already comparable to the noise, and ADMM-EPLL's λ for σ = 1 was tuned for almost no regularisation, so it amplifies the perturbation. This is the same mechanism as the σ = 0 inverse crime (Section 9). On $P_2$, ADMM-EPLL loses *more* than NAFNet in about 60% of cells, up to 14.3 vs. 9.6 dB at ε = 2%.
+- **In absolute terms ADMM-EPLL stays ahead everywhere.** Its PSNR after the attack is higher than NAFNet's after the attack in every row, by 0.25 to 8.1 dB.
+- **Caveat.** This is a transfer attack: η is NAFNet's worst case, not ADMM-EPLL's. A white-box attack on M2 needs a differentiable FISTA/EPLL and is future work. The result shows that NAFNet's adversarial directions do not carry over to the physics-aware solver; it is not a worst-case bound for M2.
+
+**Verdict:** H3 is supported for σ ≥ 5/255 under a transfer attack, and fails at σ = 1/255.
+
+---
+
+## 8. Perceptual quality (LPIPS)
+
+LPIPS (lower is better) on the seeded 50-image test subset used for the $K$-sweep, $\sigma>0$, every kernel of each set. Best per row in bold.
+
+### Table 11 — Mean LPIPS
+
+<!-- lpips:start -->
+| Set | σ | Wiener | R–L | FISTA-TV | ADMM-EPLL | U-Net | NAFNet |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| $P_1$ | 1 | 0.396 | 0.266 | 0.115 | 0.109 | 0.117 | **0.094** |
+| $P_1$ | 5 | 0.560 | 0.450 | 0.249 | 0.267 | 0.221 | **0.208** |
+| $P_1$ | 15 | 0.601 | 0.735 | 0.348 | 0.399 | 0.323 | **0.315** |
+| $P_1$ | 25 | 0.633 | 0.873 | 0.394 | 0.467 | 0.370 | **0.367** |
+| $P_2$-interp | 1 | 0.439 | 0.285 | 0.122 | **0.116** | 0.280 | 0.305 |
+| $P_2$-interp | 5 | 0.555 | 0.447 | **0.252** | 0.282 | 0.330 | 0.346 |
+| $P_2$-interp | 15 | 0.589 | 0.696 | **0.352** | 0.414 | 0.382 | 0.396 |
+| $P_2$-interp | 25 | 0.619 | 0.833 | **0.399** | 0.480 | 0.409 | 0.425 |
+| $P_2$-extrap | 1 | 0.551 | 0.452 | **0.215** | 0.215 | 0.430 | 0.429 |
+| $P_2$-extrap | 5 | 0.571 | 0.483 | **0.342** | 0.425 | 0.480 | 0.510 |
+| $P_2$-extrap | 15 | 0.593 | 0.585 | **0.424** | 0.549 | 0.500 | 0.544 |
+| $P_2$-extrap | 25 | 0.617 | 0.647 | **0.477** | 0.600 | 0.507 | 0.544 |
+| $P_1$ | **mean σ>0** | 0.547 | 0.581 | 0.276 | 0.310 | 0.258 | **0.246** |
+| $P_2$-interp | **mean σ>0** | 0.551 | 0.565 | **0.281** | 0.323 | 0.350 | 0.368 |
+| $P_2$-extrap | **mean σ>0** | 0.583 | 0.542 | **0.364** | 0.447 | 0.479 | 0.507 |
+<!-- lpips:end -->
+
+- **In distribution, the networks are perceptually better than PSNR suggests.** On $P_1$, ADMM-EPLL and NAFNet are tied in PSNR, but NAFNet's LPIPS is 0.246 against 0.310. NAFNet is best at every noise level on $P_1$.
+- **Under mismatch, the physics-aware solvers win perceptually, and FISTA-TV is best.** FISTA-TV has the lowest LPIPS in every $P_2$ row except $P_2$-interp at σ = 1, where ADMM-EPLL is ahead by 0.006 (on $P_2$-extrap at σ = 1 the two tie at 0.215). Averaged over σ > 0, FISTA-TV scores 0.281 on $P_2$-interp and 0.364 on $P_2$-extrap, against 0.368 and 0.507 for NAFNet.
+- **PSNR and LPIPS rank the two M2 solvers differently.** ADMM-EPLL beats FISTA-TV by 0.4–1.2 dB in PSNR in every row of Table 1, but FISTA-TV has the better LPIPS at every σ ≥ 5/255, on $P_1$ as well. A likely reason: the EPLL estimate averages many overlapping patch reconstructions, which lowers the squared error but smooths fine detail, while TV keeps sharp edges, which LPIPS rewards. The gap is largest at high noise (e.g. 0.477 vs. 0.600 on $P_2$-extrap at σ = 25).
+- **U-Net is perceptually slightly better than NAFNet under mismatch** (0.350 vs. 0.368 on $P_2$-interp), although NAFNet is better on $P_1$.
+
+---
+
+## 9. The noiseless case is an inverse crime
 
 At $\sigma=0$ the test observations are produced with exactly the circular FFT operator that the M2 solvers invert, with no noise and no quantization. Wiener deconvolution then inverts the blur almost exactly, scoring 80–100 dB, and the other M2 solvers are inflated as well. Such numbers say nothing about real deblurring.
 
@@ -316,7 +419,7 @@ As a check we rounded the $\sigma=0$ observations to 8-bit levels, an error of a
 
 We therefore exclude $\sigma=0$ from every average in this report and do not use it for any M1-vs-M2 claim. In future, observations should be quantized, or a noise floor added, as part of the protocol.
 
-### Table 9 — σ = 0: exact observations vs. 8-bit quantized
+### Table 12 — σ = 0: exact observations vs. 8-bit quantized
 
 Test PSNR (dB). The λ values tuned for $\sigma=0$ are kept.
 
@@ -332,26 +435,39 @@ Test PSNR (dB). The λ values tuned for $\sigma=0$ are kept.
 
 ---
 
-## 7. Discussion
+## 10. Discussion
 
 1. **In distribution, a 17 M-parameter network and a 200-component GMM with five tuned scalars are on par.** NAFNet’s advantage on $P_1$ is at most 0.5 dB and appears only at moderate-to-high noise. The learned prior (EPLL) is worth about 0.7 dB over the hand-crafted one (TV).
 2. **Physics-awareness is what transfers.** Under kernel mismatch the M1 networks lose half their gain, and on unseen motion directions nearly all of it, while the M2 solvers barely degrade. The per-σ oracle and the residual analysis both point to the unknown kernel, not the unknown noise level, as the cause.
 3. **Architecture matters only in distribution.** NAFNet beats U-Net by 0.7 dB on $P_1$ and by less than 0.1 dB on $P_2$.
 4. **The gap closes with noise.** At $\sigma=25/255$ all good methods lie within about 1 dB on every set: the problem is noise-limited, and knowing the kernel helps less.
+5. **The metric changes the ranking, but not the mismatch conclusion.** Perceptually (LPIPS) the networks win clearly on the training kernels, where PSNR calls a tie. Under kernel mismatch the physics-aware solvers win by both metrics: ADMM-EPLL by PSNR, FISTA-TV by LPIPS.
+6. **Physics-awareness buys stability only when the noise model leaves room for it.** At σ ≥ 5/255, NAFNet's adversarial perturbations barely affect ADMM-EPLL; at σ = 1/255 the weakly regularised solver amplifies them.
+
+### Hypothesis scorecard (M1 vs. M2; M3 pending)
+
+| Hypothesis | Prediction | Result |
+|---|---|---|
+| **H1** — physics-awareness pays off as information degrades | Gap widens with kernel mismatch | **Supported**: EPLL goes from tied to +2–6 dB (Sections 2, 4) |
+| | Gap widens with noise | **Not supported**: EPLL's advantage shrinks as noise grows (Table 1) |
+| | Gap widens with texture | **Weakly supported in distribution** (NAFNet's lead vanishes on textured images), no effect under mismatch (Section 6) |
+| **H2** — prior depth matters most on texture | Deep prior wins on texture | **Not supported**: NAFNet's lead comes from smooth images (Section 6) |
+| **H3** — A-awareness buys stability | M2 resists perturbations that break M1 | **Supported at σ ≥ 5/255** (2–17× smaller drop), **fails at σ = 1/255**; transfer attack only (Section 7) |
 
 ### Fairness and limitations
 
 - **M2 is given the true $k$ and $\sigma$** (non-blind), and its $\lambda$ is tuned per noise level on val. This is the intended contrast between the arms, not a confound. A blind or estimated-kernel M2 is not evaluated.
 - **M3 (unrolled, physics-aware networks) is not yet trained.** It is needed to separate physics-awareness from prior depth.
-- **H3 (stability under small perturbations) is not yet evaluated.** The transfer-attack script is implemented (`scripts/stability_test.py`); its run is pending.
+- **H3 is a transfer attack** on 10 test images; a white-box attack on M2 itself is not evaluated.
 - The noise model is synthetic Gaussian with circular boundaries; real blur (GoPro) is not evaluated.
 - Each model was trained once (one seed); differences of a few tenths of a dB between M1 variants should be read with that in mind.
-- LPIPS was not computed for all methods and is omitted.
-- The K-sweep reuses the λ tuned for $K=200$ and runs on 50 images. For ADMM-EPLL at $\sigma=0$, the best λ lay at the edge of the search grid (an inverse-crime effect, Section 6).
+- LPIPS is reported on a 50-image test subset, not the full test split.
+- The texture analysis (H2) uses a single texture measure (mean gradient magnitude).
+- The K-sweep reuses the λ tuned for $K=200$ and runs on 50 images. For ADMM-EPLL at $\sigma=0$, the best λ lay at the edge of the search grid (an inverse-crime effect, Section 9).
 
 ---
 
-## 8. Reproducibility and status
+## 11. Reproducibility and status
 
 ### Code and data
 
@@ -363,24 +479,25 @@ Test PSNR (dB). The λ values tuned for $\sigma=0$ are kept.
 | M3 training (USRNet / ISTA-Net / LISTA) | `scripts/train_m3.py`, `src/deblur/methods/unrolled/` |
 | Unified evaluation | `scripts/evaluate.py` (M2 GPU backend: `--m2-backend torch`) |
 | H3 stability (transfer attack) | `scripts/stability_test.py`, `src/deblur/metrics/stability.py` |
-
-H3 is not yet run. The command is:
-
-```bash
-python3 scripts/stability_test.py --data-root data \
-  --m1-checkpoint checkpoints/m1/nafnet/best.pt \
-  --gmm checkpoints/m2/epll_gmm_K200.npz \
-  --psf-set P1 --sigmas 1,15 --eps 0.005,0.01,0.02 --limit 10
-```
-
-The script runs white-box PGD on M1 (or M3 with `--attack-arm m3`) and evaluates
-every available arm on the same perturbed observations. It is a transfer attack,
-not a per-method white-box attack for M2. Full options are in
-`vault/Proposed Approach.md` §6.1.
 | Tables and statistics | `scripts/analyze_m1_m2.py` |
+| Texture analysis (H2) | `scripts/analyze_texture.py` → `report/generated/texture.md` |
+| H3 and LPIPS tables | `scripts/analyze_h3_lpips.py` → `report/generated/h3.md`, `lpips.md` |
+| Qualitative figure | `scripts/make_qualitative.py` |
 | Aggregated results | `report/generated/numbers.json`, `psnr_P1.dat`, `psnr_P2_interp.dat`, `psnr_P2_extrap.dat`, `ksweep.dat` |
 | Qualitative crops | `report/generated/qualitative/` |
 | Figures | `report/generated/figure1_psnr_vs_sigma.png`, `report/generated/figure3_ksweep.png` |
+
+The H3 run used, once per PSF set (`P1`, `P2_interp`, `P2_extrap`):
+
+```bash
+python3 scripts/stability_test.py --data-root data \
+  --gmm checkpoints/m2/gmm_K200.npz \
+  --lambda-values <the five tuned ADMM-EPLL values> \
+  --psf-set P1 --psf-limit 100 --sigmas 1,5,15,25 \
+  --eps 0.005,0.01,0.02 --limit 10
+```
+
+LPIPS used `scripts/evaluate.py ... --subset 50 --sigmas 1,5,15,25 --lpips` for every method.
 
 Protocol manifests (PSF sets, splits, validation subset) are git-ignored; regenerate them with:
 
@@ -394,7 +511,9 @@ The raw per-cell evaluation CSVs and the `sigma0_quantized` CSVs used by `script
 
 - **M1 + M2:** complete interim comparison, reported above.
 - **M3:** implemented, not trained; the three-arm control is pending.
-- **H3:** transfer-attack script implemented (`scripts/stability_test.py`); run pending.
+- **H2:** texture analysis done (Section 6); not supported.
+- **H3:** transfer attack run on all three PSF sets (Section 7); supported at σ ≥ 5/255.
+- **LPIPS:** all methods on the 50-image test subset (Section 8).
 - **σ=0:** excluded from headline averages; 8-bit check reported. Future runs should quantize observations or add a noise floor to the protocol.
 
 ---
