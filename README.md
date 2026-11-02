@@ -78,7 +78,7 @@ Only M1 and M3 train end-to-end networks; M2 learns a prior and runs a per-image
 │   ├── eval_m1.py       # M1-only evaluation (kept for compatibility)
 │   ├── evaluate.py      # unified M1/M2/M3 evaluation with per-cell baseline
 │   └── stability_test.py # H3 transfer attack: PGD on M1, evaluate all arms
-├── report/              # interim M1/M2 report + generated data/figures
+├── report/              # consolidated study report + generated data/figures
 └── vault/               # design notes (Obsidian)
     ├── Project Overview.md
     └── Proposed Approach.md
@@ -260,7 +260,7 @@ EPLL. Details: report §7.
 ## Status
 
 All three arms are implemented. M1 and M2 have a complete comparison, reported
-in [`report/m1_m2_comparison.md`](report/m1_m2_comparison.md):
+in [`report/study_report.md`](report/study_report.md):
 
 - **M2:** Wiener, Richardson–Lucy, FISTA-TV, EPLL/GMM + ADMM-EPLL.
 - **M1:** NAFNet and U-Net, protocol sampler, training loop, checkpoint

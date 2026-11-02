@@ -113,7 +113,7 @@ Full bibliography: [[Proposed Approach]] §12.
 ## 9. Status
 
 Active. M1 and M2 have a complete comparison, reported in
-`report/m1_m2_comparison.md`, including the H2 texture and H3 stability
+`report/study_report.md`, including the H2 texture and H3 stability
 analyses and LPIPS. Key results: kernel mismatch is supported; H2 (texture) is
 not supported; H3 holds at σ≥5 but only in distribution at σ=1; under mismatch
 at σ=1, EPLL's weak λ amplifies perturbations. The M3 arm (USRNet / ISTA-Net /
