@@ -333,6 +333,8 @@ python3 scripts/stability_test.py --data-root data \
 
 **Interpretation.** A positive `drop` at a small ε that is much larger for M1 than M2/M3 supports H3. Because this is a transfer attack, report it as such; it is not a per-method worst-case bound.
 
+**Result (transfer attack, 10 images).** At $\sigma\ge5/255$, ADMM-EPLL loses 2–17× less PSNR and loses less in 99–100% of cells. At $\sigma=1/255$ the picture splits: on $P_1$ EPLL still loses less in 92% of cells, but on $P_2$ it loses less in only 38–41%, because the weak $\sigma=1$ λ amplifies the perturbation. EPLL's absolute PSNR after the attack remains higher than NAFNet's everywhere. H3 is therefore supported at $\sigma\ge5$ and only in distribution at $\sigma=1$; M3 is needed to attribute this to A-awareness rather than prior depth. Details: `report/m1_m2_comparison.md` §7.
+
 ---
 
 ## 7. Datasets, splits, and protocol (locked)
@@ -397,8 +399,8 @@ membership, sampling policy, checkpoint rule, and learned-arm hyperparameters.
 | 7 | direct arm (`direct/nafnet.py`, `direct/unet.py`, `training/`, `scripts/train_m1.py`, `scripts/eval_m1.py`) | ✅ implemented + tested; M1/M2 interim results in `report/m1_m2_comparison.md` |
 | 8 | unrolled arm (`unrolled/usrnet.py`, `unrolled/ista_net.py`, `unrolled/lista.py`, `scripts/train_m3.py`) | ✅ implemented + tested (torch-guarded); training pending |
 | 9 | unified evaluation (`evaluation/`, `scripts/evaluate.py`) with paired per-cell baseline | ✅ implemented + tested |
-| 10 | interim report (`report/m1_m2_comparison.md`, `report/generated/`) | ✅ M1/M2 results; M3 and H3 pending |
-| H3 | stability (`metrics/stability.py`, `scripts/stability_test.py`) | ✅ implemented (transfer attack); run pending |
+| 10 | interim report (`report/m1_m2_comparison.md`, `report/generated/`) | ✅ M1/M2 + H2/H3/LPIPS results; M3 pending |
+| H3 | stability (`metrics/stability.py`, `scripts/stability_test.py`) | ✅ implemented + run (transfer, 10 images); report §7 |
 
 ---
 

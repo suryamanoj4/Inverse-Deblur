@@ -251,10 +251,16 @@ a per-method white-box attack for M2 requires a gradient-enabled solver.
 Outputs land in `artifacts/stability/`: CSV rows, `*_summary.json` and
 `*_metadata.json`.
 
+**Result (transfer attack, 10 images).** At σ≥5 EPLL loses 2–17× less PSNR and
+is less affected in 99–100% of cells. At σ=1 it is more stable in distribution
+(92% of cells) but not under kernel mismatch (38–41% on P2), where its weak λ
+amplifies the perturbation. Absolute PSNR after the attack remains higher for
+EPLL. Details: report §7.
+
 ## Status
 
-All three arms are implemented. M1 and M2 have a complete interim comparison,
-reported in [`report/m1_m2_comparison.md`](report/m1_m2_comparison.md):
+All three arms are implemented. M1 and M2 have a complete comparison, reported
+in [`report/m1_m2_comparison.md`](report/m1_m2_comparison.md):
 
 - **M2:** Wiener, Richardson–Lucy, FISTA-TV, EPLL/GMM + ADMM-EPLL.
 - **M1:** NAFNet and U-Net, protocol sampler, training loop, checkpoint
@@ -262,11 +268,20 @@ reported in [`report/m1_m2_comparison.md`](report/m1_m2_comparison.md):
 - **M3:** USRNet, ISTA-Net and LISTA, sharing the same sampler, trainer and
   evaluator; **implemented but not yet trained**.
 
-The interim results confirm the predicted kernel-mismatch failure on unseen
-motion and defocus, with paired tests and a per-cell baseline. The H3 stability
-script is implemented (`scripts/stability_test.py`); its transfer-attack run is
-pending. The three-arm control (M3) and the H3 run are the remaining
-experiments.
+Key results:
+
+- **Kernel mismatch:** supported. EPLL goes from tied to +2–6 dB, while NAFNet
+  loses half its gain; the failure is on unseen motion directions.
+- **Texture (H2):** not supported. NAFNet’s in-distribution advantage comes
+  from smooth images; on textured images EPLL is slightly better.
+- **Stability (H3, transfer attack):** at σ≥5, EPLL loses 2–17× less PSNR and
+  is less affected in 99–100% of cells. At σ=1 it is more stable in
+  distribution (92% of cells) but not under kernel mismatch (38–41%).
+- **LPIPS:** NAFNet is perceptually best in distribution; FISTA-TV is best
+  under kernel mismatch.
+
+The remaining experiments are the M3 arm and a per-method white-box H3 attack
+on M2.
 
 Install the learned-arm dependencies (PyTorch and LPIPS) with
 `pip install -r requirements.txt`; for a CPU-only PyTorch wheel, use the
