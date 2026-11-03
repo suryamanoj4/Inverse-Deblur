@@ -143,6 +143,21 @@ function content(title, section) {
 
 const f2 = (v) => v.toFixed(2);
 
+const METHOD_LABEL = { wiener: "Wiener", rl: "R–L", fista: "FISTA-TV", epll: "ADMM-EPLL", unet: "U-Net", nafnet: "NAFNet" };
+// One colour per method across every chart: grays for untuned baselines, teal shades for M2, rust shades for M1.
+const METHOD_HEX = { blurred: "1B2030", wiener: "B7BEC9", rl: "7A8699", fista: "8FCFC6", epll: M2, unet: "E3A08F", nafnet: M1 };
+
+function legendRow(slide, keys, x, y, w) {
+  const step = w / keys.length;
+  keys.forEach((key, i) => {
+    const label = key === "blurred" ? "Blurred input" : METHOD_LABEL[key];
+    slide.addShape(pres.shapes.OVAL, { x: x + i * step, y: y + 0.08, w: 0.18, h: 0.18,
+      fill: { color: METHOD_HEX[key] }, line: { color: METHOD_HEX[key] } });
+    text(slide, label, { x: x + i * step + 0.25, y, w: step - 0.3, h: 0.34, fontSize: 12, color: C.text2,
+      valign: "middle" });
+  });
+}
+
 // ---- slides ----------------------------------------------------------------
 async function build() {
   // 1. Title ---------------------------------------------------------------
@@ -180,6 +195,30 @@ async function build() {
   s.addNotes("Six parts, matching the evaluation requirements: work completed; algorithms, models and implementation; " +
     "results; challenges; remaining work and future plans; expected outcomes.");
 
+  // 2b. Executive summary -------------------------------------------------
+  s = content("The short version: what we found so far", "Introduction");
+  {
+    const rows = [
+      ["Is the deep network better on training kernels?", `Tied in PSNR (${f2(numbers.mismatch.nafnet.P1)} vs ${f2(numbers.mismatch.epll.P1)} dB); NAFNet is better perceptually`, "Tie", AMBER],
+      ["Does it survive an unseen blur kernel?", "Not on motion: it loses half its gain; ADMM-EPLL wins every unseen-kernel cell, by up to 6.4 dB", "M2 wins", M2],
+      ["Is the gap about not knowing the noise level?", "No: knowing σ is worth at most 0.25 dB to NAFNet; the kernel is the missing information", "Kernel", M2],
+      ["Does image texture explain it (H2)?", "No: NAFNet's small edge comes from smooth images, the opposite of H2", "Not H2", M1],
+      ["Is the deep network stable (H3)?", "ADMM-EPLL is 2–17× more stable at σ ≥ 5; at σ = 1 under mismatch it is not", "Mostly M2", M2],
+    ];
+    for (let i = 0; i < rows.length; i++) {
+      const y = 1.45 + i * 0.95;
+      card(s, 0.6, y, 12.1, 0.8, { name: `summary row ${i + 1}`, shadow: false });
+      text(s, rows[i][0], { x: 0.85, y: y + 0.12, w: 4.3, h: 0.56, fontSize: 15, bold: true, valign: "middle" });
+      text(s, rows[i][1], { x: 5.3, y: y + 0.12, w: 5.6, h: 0.56, fontSize: 14, color: C.text2, valign: "middle" });
+      pill(s, rows[i][2], 11.15, y + 0.23, 1.35, rows[i][3]);
+    }
+    card(s, 0.6, 6.25, 12.1, 0.6, { fill: C.text1, line: C.text1, shadow: false, name: "headline" });
+    text(s, "Headline: neither side simply wins. Physics-awareness is what transfers.",
+      { x: 0.85, y: 6.3, w: 11.6, h: 0.5, fontSize: 16, bold: true, color: C.background1, valign: "middle" });
+  }
+  s.addNotes("If you remember one slide, it is this one. On the kernels the network was trained on, the two arms are tied. " +
+    "On kernels it never saw, especially new motion directions, the physics-aware solver wins clearly. The rest of the talk explains how we know.");
+
   // 3. Problem -------------------------------------------------------------
   s = content("Deblurring is an ill-posed inverse problem", "Introduction");
   card(s, 0.6, 1.5, 6.0, 4.9, { name: "equation card" });
@@ -202,6 +241,41 @@ async function build() {
     "so inverting it directly blows up the noise. The question is whether a good restorer should use the operator itself, " +
     "or learn everything from example pairs. Existing papers use different data and settings, so their numbers cannot be compared; " +
     "our contribution is running them under one locked protocol.");
+
+  // 3b. What blur looks like ----------------------------------------------
+  s = content("What blur does, and why inverting it fails", "Introduction");
+  {
+    const Q = path.join(GEN, "qualitative");
+    const pairs = [
+      ["P1_motion_l15_a45_s5", "Motion blur", "15 px at 45°, noise σ = 5"],
+      ["P2_extrap_defocus_r7_s5", "Defocus blur", "disk of radius 7 px, noise σ = 5"],
+      ["P2_interp_gaussian_sigma1.4_s15", "Gaussian blur + strong noise", "σk = 1.4, noise σ = 15"],
+    ];
+    for (let i = 0; i < 3; i++) {
+      const x = 0.6 + i * 4.1;
+      ["sharp", "observed"].forEach((kind, j) => {
+        s.addImage({ path: path.join(Q, `${pairs[i][0]}_${kind}.png`), x: x + j * 1.95, y: 1.45, w: 1.8, h: 1.8,
+          altText: `${pairs[i][1]}: ${kind === "sharp" ? "sharp original" : "blurred observation"}` });
+      });
+      text(s, "sharp  →  observed", { x, y: 3.3, w: 3.75, h: 0.3, fontSize: 12, color: C.text2, align: "center" });
+      text(s, pairs[i][1], { x, y: 3.6, w: 3.75, h: 0.35, fontSize: 15, bold: true, align: "center" });
+      text(s, pairs[i][2], { x, y: 3.92, w: 3.75, h: 0.3, fontSize: 12, color: C.text2, align: "center" });
+    }
+    card(s, 0.6, 4.45, 12.1, 2.35, { name: "inversion card" });
+    const strip = [["observed", "Observed"], ["wiener", "Direct inverse (Wiener)"], ["epll", "With a learned prior"]];
+    strip.forEach(([kind, label], j) => {
+      s.addImage({ path: path.join(Q, `P1_motion_l15_a45_s5_${kind}.png`), x: 0.85 + j * 1.9, y: 4.65, w: 1.7, h: 1.7,
+        altText: `${label}, motion blur example` });
+      text(s, label, { x: 0.85 + j * 1.9, y: 6.38, w: 1.75, h: 0.3, fontSize: 11, color: C.text2, align: "center" });
+    });
+    text(s, "Undoing the blur directly boosts the frequencies the blur destroyed, and the noise with them (middle). Every good method adds a prior: an assumption about what natural images look like (right).",
+      { x: 6.75, y: 4.8, w: 5.7, h: 1.4, fontSize: 15 });
+    text(s, "The question is where that prior and the blur model come from.",
+      { x: 6.75, y: 6.15, w: 5.7, h: 0.45, fontSize: 15, bold: true, color: M2 });
+  }
+  s.addNotes("Top row: three kinds of blur from our test set. Bottom: if you simply invert the blur, the noise is amplified, " +
+    "as in the middle image. Adding a prior gives the clean result on the right. Every method we compare is a different way of combining " +
+    "the blur model with a prior.");
 
   // 4. Arms and hypotheses --------------------------------------------------
   s = content("Three arms and three hypotheses", "Introduction");
@@ -296,6 +370,25 @@ async function build() {
   s.addNotes("The protocol is what makes the comparison fair. Same images, same kernels, same noisy observations, selection on " +
     "validation only. P1 is what M1 trains on; P2-interp has unseen settings of the same kernel types, and P2-extrap is a kernel " +
     "type nobody trains on.");
+
+  // 6b. Kernel gallery ----------------------------------------------------
+  s = content("Training kernels vs. unseen kernels", "Work completed");
+  {
+    const K = path.join(GEN, "deck");
+    const sets = [
+      ["P1", "P1 · training kernels (12)", "4 Gaussian widths and 8 motion blurs: lengths 9 and 15 px at 0°, 45°, 90°, 135°. M1 learns from these.", 1.45, 1.75, 5.04, HEX.dk2],
+      ["P2_interp", "P2-interp · unseen settings (11)", "Same families, new parameters: Gaussian widths in between, motion of 11 and 13 px at 22.5°, 67.5°, 112.5°, 157.5°.", 3.45, 1.75, 5.04, M1],
+      ["P2_extrap", "P2-extrap · unseen family (4)", "Defocus disks of radius 3, 5, 7, 9 px: a kind of blur no model trains on.", 5.45, 1.1, 4.03, M1],
+    ];
+    for (const [key, title, body, y, h, w, color] of sets) {
+      s.addImage({ path: path.join(K, `kernels_${key}.png`), x: 0.6, y, w, h, altText: `${title} kernel pictures` });
+      text(s, title, { x: 6.0, y: y + 0.1, w: 6.7, h: 0.4, fontSize: 18, bold: true, color });
+      text(s, body, { x: 6.0, y: y + 0.55, w: 6.7, h: 1.0, fontSize: 15, color: C.text2 });
+    }
+  }
+  s.addNotes("Each square is one blur kernel: the pattern a single bright point is smeared into. P1 is what the network trains on. " +
+    "P2-interp keeps the same kinds of blur but changes the settings, for example new motion directions. P2-extrap is a new kind of blur, " +
+    "defocus. Physics-aware methods are given the correct kernel in every case; the data-only network has to cope without it.");
 
   // 7. M1 ------------------------------------------------------------------
   pres.addSection({ title: "Algorithms and implementation" });
@@ -409,8 +502,58 @@ async function build() {
   s.addNotes("The evaluator is shared by all arms, so numbers pair one to one. The GPU port of the classical solvers made the " +
     "M2 evaluation feasible. Statistics treat the image as the unit, so the 27 kernels of one image are not counted as independent samples.");
 
-  // 11. Main result chart ---------------------------------------------------
+  // 10b. How to read the results ------------------------------------------
   pres.addSection({ title: "Results so far" });
+  s = content("How we measure: the metrics in plain language", "Results so far");
+  {
+    const metrics = [
+      [fa.FaBullseye, "PSNR (dB, higher is better)", "Pixel accuracy. +1 dB is a clearly visible improvement; it can favour slightly blurry results.", M2],
+      [fa.FaShapes, "SSIM (0–1, higher is better)", "Local structural similarity: closer to how an image looks than PSNR, still simple.", M2],
+      [fa.FaEye, "LPIPS (lower is better)", "A learned perceptual distance: images that look alike score low even if pixels differ.", M2],
+      [fa.FaUndo, "Data consistency (lower)", "Re-blur the output with the true kernel: does it reproduce the observation? It should leave about σ.", AMBER],
+      [fa.FaEquals, "“Blurred” baseline", "The unrestored observation. A method below this line is worse than doing nothing.", AMBER],
+      [fa.FaBalanceScale, "Paired tests", "Is a difference consistent over all 200 images? Wilcoxon signed-rank, Holm-corrected.", AMBER],
+    ];
+    for (let i = 0; i < metrics.length; i++) {
+      const col = i % 3, row = Math.floor(i / 3);
+      const x = 0.6 + col * 4.1, y = 1.45 + row * 2.6;
+      card(s, x, y, 3.8, 2.35, { name: `metric card ${i + 1}` });
+      await iconCircle(s, metrics[i][0], x + 0.3, y + 0.3, 0.6, metrics[i][3], `metric icon ${i + 1}`);
+      text(s, metrics[i][1], { x: x + 1.05, y: y + 0.3, w: 2.6, h: 0.6, fontSize: 15, bold: true, valign: "middle" });
+      text(s, metrics[i][2], { x: x + 0.3, y: y + 1.05, w: 3.3, h: 1.2, fontSize: 14, color: C.text2 });
+    }
+  }
+  s.addNotes("A quick guide before the numbers. PSNR measures pixel accuracy, LPIPS how similar images look to a person. " +
+    "Data consistency asks whether the output explains what the camera recorded. 'Blurred' is the do-nothing baseline. " +
+    "Noise levels are always quoted on the 0–255 scale.");
+
+  // 10c. PSNR vs noise (study report Figure 1) ------------------------------
+  s = content("PSNR vs noise: networks sink on unseen kernels", "Results so far");
+  {
+    const keys = ["blurred", "wiener", "rl", "fista", "epll", "unet", "nafnet"];
+    const sets = [["P1", "P1 · training kernels"], ["P2_interp", "P2-interp · unseen settings"], ["P2_extrap", "P2-extrap · unseen family"]];
+    sets.forEach(([set, title], i) => {
+      const x = 0.6 + i * 4.1;
+      text(s, title, { x, y: 1.4, w: 3.9, h: 0.4, fontSize: 15, bold: true, align: "center" });
+      const data = keys.map((key) => ({
+        name: key === "blurred" ? "Blurred input" : METHOD_LABEL[key],
+        labels: ["1", "5", "15", "25"],
+        values: [1, 5, 15, 25].map((sig) => +(key === "blurred" ? numbers.blurred[`${set}/${sig}`] : numbers.mean[key][`${set}/${sig}`]).toFixed(2)),
+      }));
+      s.addChart(pres.charts.LINE, data, {
+        x, y: 1.8, w: 3.9, h: 4.3, chartColors: keys.map((k) => METHOD_HEX[k]), lineSize: 2, lineDataSymbol: "circle",
+        lineDataSymbolSize: 6, showLegend: false, valAxisMinVal: 15, valAxisMaxVal: 33, valAxisMajorUnit: 3,
+        showCatAxisTitle: true, catAxisTitle: "noise σ (×1/255)", showValAxisTitle: i === 0, valAxisTitle: "PSNR (dB)",
+        showTitle: false, ...CHART_TEXT, catAxisTitleFontSize: 12, catAxisTitleColor: HEX.dk2,
+      });
+    });
+    legendRow(s, keys, 0.9, 6.25, 11.8);
+  }
+  s.addNotes("Each line is a method; higher is better; the black line is the unrestored image. On the training kernels (left) the teal M2 " +
+    "solvers and the rust M1 networks sit together. On unseen kernels (middle, right) the networks fall almost onto the black baseline at low noise, " +
+    "while ADMM-EPLL and FISTA-TV keep their margin. At high noise everything converges.");
+
+  // 11. Main result chart ---------------------------------------------------
   s = content("Tied on training kernels; M2 wins under mismatch", "Results so far");
   const mm = numbers.mismatch;
   const series = [["NAFNet (M1)", "nafnet"], ["U-Net (M1)", "unet"], ["FISTA-TV (M2)", "fista"], ["ADMM-EPLL (M2)", "epll"]];
@@ -440,6 +583,42 @@ async function build() {
     "On unseen kernels the networks lose about half their gain while the physics-aware solvers keep it. The per-sigma specialists " +
     "gain at most 0.25 dB, so the networks are missing the kernel, not the noise level. The failure is concentrated on unseen motion directions.");
 
+  // 11b. Where M1 fails -----------------------------------------------------
+  s = content("Where M1 fails, and why we trust M2", "Results so far");
+  {
+    const fam = numbers.family;
+    const groups = [["P1/gaussian", "Gaussian (train)"], ["P1/motion", "Motion (train)"], ["P2_interp/gaussian", "Gaussian (new)"],
+      ["P2_interp/motion", "Motion (new)"], ["P2_extrap/defocus", "Defocus (new)"]];
+    text(s, "PSNR by kind of blur (mean over σ > 0)", { x: 0.6, y: 1.4, w: 6.6, h: 0.4, fontSize: 15, bold: true });
+    s.addChart(pres.charts.BAR, ["blurred", "epll", "nafnet"].map((key) => ({
+      name: key === "blurred" ? "Blurred input" : METHOD_LABEL[key], labels: groups.map((g) => g[1]),
+      values: groups.map((g) => +fam[key][g[0]].toFixed(1)),
+    })), {
+      x: 0.6, y: 1.8, w: 6.6, h: 4.2, barDir: "col", barGrouping: "clustered", barGapWidthPct: 50,
+      chartColors: [METHOD_HEX.blurred, M2, M1], showValue: true, dataLabelPosition: "outEnd", dataLabelFormatCode: "0.0",
+      showLegend: true, legendPos: "b", valAxisMinVal: 18, valAxisMaxVal: 30, showTitle: false, ...CHART_TEXT,
+      dataLabelFontSize: 10, catAxisLabelFontSize: 11,
+    });
+    const res = numbers.residual_255;
+    text(s, "Data consistency at σ = 1 (lower is better)", { x: 7.6, y: 1.4, w: 5.1, h: 0.4, fontSize: 15, bold: true });
+    s.addChart(pres.charts.BAR, ["epll", "nafnet"].map((key) => ({
+      name: METHOD_LABEL[key], labels: ["P1", "P2-interp", "P2-extrap"],
+      values: ["P1", "P2_interp", "P2_extrap"].map((set) => +res[key][`${set}/1`].toFixed(2)),
+    })), {
+      x: 7.6, y: 1.8, w: 5.1, h: 3.3, barDir: "col", barGrouping: "clustered", barGapWidthPct: 60,
+      chartColors: [M2, M1], showValue: true, dataLabelPosition: "outEnd", dataLabelFormatCode: "0.0",
+      showLegend: true, legendPos: "b", valAxisMinVal: 0, valAxisMaxVal: 5, showValAxisTitle: true,
+      valAxisTitle: "residual RMSE (×1/255)", showTitle: false, ...CHART_TEXT,
+    });
+    text(s, "A consistent restoration leaves about the noise level (1). On unseen kernels NAFNet leaves 3–4×: its output, blurred again, does not match what was recorded.",
+      { x: 7.6, y: 5.2, w: 5.1, h: 1.0, fontSize: 13, color: C.text2 });
+    text(s, "Unseen Gaussian widths cost NAFNet 0.7 dB; unseen motion directions cost it 3.6 dB, leaving it just above the blurred input.",
+      { x: 0.6, y: 6.1, w: 6.6, h: 0.7, fontSize: 13, color: C.text2 });
+  }
+  s.addNotes("Breaking results down by kind of blur shows where the network fails: it handles new Gaussian widths, but not new motion directions. " +
+    "The right chart explains why we trust the solvers: if you blur their output again with the true kernel you get back what the camera saw. " +
+    "NAFNet's output does not pass that check on unseen kernels.");
+
   // 12. Qualitative ---------------------------------------------------------
   s = content("Unseen motion: NAFNet does not undo the blur", "Results so far");
   const q = "P2_interp_motion_l13_a67.5_s1";
@@ -462,6 +641,69 @@ async function build() {
   ], { x: 0.9, y: 5.15, w: 11.5, h: 1.45, fontSize: 14 });
   s.addNotes("This is the typical case, not the best case: the image with the median difference between ADMM-EPLL and NAFNet for this " +
     "cell. The network was trained on eight motion directions and does not generalise to a new one; the solvers use the true kernel.");
+
+  // 12b. Other three cases ------------------------------------------------
+  s = content("Three more cases, chosen without looking", "Results so far");
+  {
+    const Q = path.join(GEN, "qualitative");
+    const cols = [["sharp", "Sharp"], ["observed", "Observed"], ["wiener", "Wiener"], ["fista", "FISTA-TV"], ["epll", "ADMM-EPLL"], ["nafnet", "NAFNet"]];
+    const cases = [
+      ["P1_motion_l15_a45_s5", "In distribution", "P1 motion 15 px, 45°, σ = 5", [null, 19.95, 22.34, 26.24, 28.26, 28.43]],
+      ["P2_extrap_defocus_r7_s5", "Unseen family", "defocus, radius 7 px, σ = 5", [null, 17.17, 19.14, 19.49, 20.12, 18.48]],
+      ["P2_interp_gaussian_sigma1.4_s15", "High noise", "Gaussian σk = 1.4, σ = 15", [null, 23.01, 23.19, 27.72, 28.84, 29.14]],
+    ];
+    cols.forEach(([, label], j) => {
+      text(s, label, { x: 2.6 + j * 1.68, y: 1.35, w: 1.55, h: 0.3, fontSize: 13, bold: true, align: "center" });
+    });
+    cases.forEach(([stem, title, detail, psnr], i) => {
+      const y = 1.7 + i * 1.72;
+      text(s, title, { x: 0.6, y: y + 0.35, w: 1.9, h: 0.4, fontSize: 15, bold: true });
+      text(s, detail, { x: 0.6, y: y + 0.75, w: 1.9, h: 0.6, fontSize: 11, color: C.text2 });
+      const best = Math.max(...psnr.slice(2));
+      cols.forEach(([kind, label], j) => {
+        const x = 2.6 + j * 1.68;
+        s.addImage({ path: path.join(Q, `${stem}_${kind}.png`), x, y, w: 1.4, h: 1.4, altText: `${title}: ${label}` });
+        const v = psnr[j];
+        text(s, v === null ? "PSNR (dB)" : v.toFixed(2), { x: x - 0.05, y: y + 1.4, w: 1.5, h: 0.28, fontSize: 12,
+          align: "center", bold: v === best, color: v === best ? (kind === "nafnet" ? M1 : M2) : C.text2 });
+      });
+    });
+  }
+  s.addNotes("Same selection rule as before: each row is the median image for its condition, not a favourite. In distribution, NAFNet and " +
+    "ADMM-EPLL look alike. On defocus, an unseen kind of blur, every method struggles and the solvers recover more edges. At high noise, " +
+    "NAFNet gives the cleanest result: knowing the kernel matters least when noise dominates.");
+
+  // 12c. Ablations: sigma oracle and K-sweep (study report Figure 3) --------
+  s = content("Knowing σ barely helps; bigger priors saturate", "Results so far");
+  {
+    text(s, "Specialist for one σ vs. the single NAFNet", { x: 0.6, y: 1.4, w: 6.0, h: 0.4, fontSize: 15, bold: true });
+    const sets = [["P1", "P1"], ["P2_interp", "P2-interp"], ["P2_extrap", "P2-extrap"]];
+    s.addChart(pres.charts.BAR, sets.map(([key, label]) => ({
+      name: label, labels: ["σ = 1", "σ = 5", "σ = 15", "σ = 25"],
+      values: [1, 5, 15, 25].map((sig) => +numbers.specialists[`${key}/${sig}`].toFixed(2)),
+    })), {
+      x: 0.6, y: 1.8, w: 6.0, h: 3.9, barDir: "col", barGrouping: "clustered", barGapWidthPct: 60,
+      chartColors: [M1, "E3A08F", "F1CFC6"], showValue: true, dataLabelPosition: "outEnd", dataLabelFormatCode: "+0.00;-0.00",
+      showLegend: true, legendPos: "b", valAxisMinVal: -0.5, valAxisMaxVal: 0.5, showValAxisTitle: true,
+      valAxisTitle: "PSNR change (dB)", showTitle: false, ...CHART_TEXT, dataLabelFontSize: 10,
+    });
+    text(s, "At most +0.25 dB: the network is not missing the noise level. It is missing the kernel.",
+      { x: 0.6, y: 5.85, w: 6.0, h: 0.8, fontSize: 14, color: C.text2 });
+    text(s, "ADMM-EPLL vs. GMM size K (50 test images)", { x: 7.0, y: 1.4, w: 5.7, h: 0.4, fontSize: 15, bold: true });
+    const ks = ["1", "4", "16", "64", "200"];
+    s.addChart(pres.charts.LINE, sets.map(([, label], i) => ({
+      name: label, labels: ks.map((k) => `K = ${k}`), values: ks.map((k) => +numbers.ksweep[k][i].toFixed(2)),
+    })), {
+      x: 7.0, y: 1.8, w: 5.7, h: 3.9, chartColors: [M2, "5FBDB0", "A9DCD5"], lineSize: 2.5, lineDataSymbol: "circle",
+      lineDataSymbolSize: 7, showLegend: true, legendPos: "b", valAxisMinVal: 23, valAxisMaxVal: 28,
+      showValAxisTitle: true, valAxisTitle: "PSNR (dB), mean σ > 0", showTitle: false, ...CHART_TEXT,
+    });
+    text(s, "1 → 4 components: +1.8 dB; 64 → 200: +0.02 dB. The mismatch gap stays the same for every K.",
+      { x: 7.0, y: 5.85, w: 5.7, h: 0.8, fontSize: 14, color: C.text2 });
+  }
+  s.addNotes("Left: if we give NAFNet the noise level by training one specialist per level, it gains at most a quarter of a dB, and nothing " +
+    "on unseen kernels. Right: making the classical prior richer helps at first and then flattens out, and it never changes the robustness to " +
+    "unseen kernels. Robustness comes from the known blur model, not from prior capacity.");
 
   // 13. H3 chart -----------------------------------------------------------
   s = content("H3: M2 resists NAFNet's perturbations at σ ≥ 5", "Results so far");
@@ -528,6 +770,34 @@ async function build() {
   s.addNotes("Two results went against expectations. First, the deep network's small in-distribution advantage comes from smooth " +
     "images, the opposite of H2. Second, LPIPS ranks things differently from PSNR: NAFNet is perceptually best on the training kernels, " +
     "and on unseen kernels the TV solver is best, even though ADMM-EPLL has the higher PSNR. The physics-aware arm wins under mismatch by both metrics.");
+
+  // 14b. Inverse crime ------------------------------------------------------
+  s = content("A trap we caught: the σ = 0 inverse crime", "Results so far");
+  {
+    const methods = ["wiener", "fista", "epll", "nafnet"];
+    s.addChart(pres.charts.BAR, [["Exact σ = 0 data", 0, "B7BEC9"], ["Rounded to 8 bits", 1, AMBER]].map(([name, idx]) => ({
+      name, labels: methods.map((m) => METHOD_LABEL[m]),
+      values: methods.map((m) => +numbers.sigma0[`${m}/P1`][idx].toFixed(1)),
+    })), {
+      x: 0.6, y: 1.45, w: 7.2, h: 5.2, barDir: "col", barGrouping: "clustered", barGapWidthPct: 60,
+      chartColors: ["B7BEC9", AMBER], showValue: true, dataLabelPosition: "outEnd", dataLabelFormatCode: "0.0",
+      showLegend: true, legendPos: "b", valAxisMinVal: 0, valAxisMaxVal: 110, showValAxisTitle: true,
+      valAxisTitle: "PSNR on P1 at σ = 0 (dB)", showTitle: false, ...CHART_TEXT,
+    });
+    const notes = [
+      ["Why 100 dB?", "Test images were blurred with exactly the operator the solvers invert, with no noise: inversion becomes trivially exact."],
+      ["The check", "Rounding the same images to 8 bits (an error of 0.0011) makes Wiener collapse to 12.6 dB; ADMM-EPLL loses 7 dB; NAFNet is unaffected."],
+      ["What we did", "σ = 0 is excluded from every average and claim. Future protocol: quantize observations or add a noise floor."],
+    ];
+    notes.forEach(([title, body], i) => {
+      const y = 1.5 + i * 1.75;
+      card(s, 8.2, y, 4.5, 1.5, { name: `crime card ${i + 1}` });
+      text(s, title, { x: 8.45, y: y + 0.15, w: 4.0, h: 0.4, fontSize: 16, bold: true, color: i === 2 ? M2 : AMBER });
+      text(s, body, { x: 8.45, y: y + 0.55, w: 4.0, h: 0.9, fontSize: 13, color: C.text2 });
+    });
+  }
+  s.addNotes("An 'inverse crime' is testing on data made with exactly the model you invert. Without noise the Wiener filter scores 100 dB, " +
+    "which is meaningless. Rounding to 8 bits, as any real camera does, exposes it. This is why the noiseless condition is excluded from our claims.");
 
   // 15. Scorecard ----------------------------------------------------------
   s = content("Hypothesis scorecard so far (M1 vs M2)", "Results so far");
@@ -630,6 +900,36 @@ async function build() {
   await iconCircle(s, fa.FaEye, 0.8, 0.9, 0.9, M2, "closing icon");
   s.addNotes("Summary: in distribution, the deep network and the classical solver are on par. Under kernel mismatch, using the " +
     "physics is what transfers. M3 will show whether a deep prior inside a physics-aware solver gets the best of both.");
+
+  // 20. Appendix: glossary -------------------------------------------------
+  pres.addSection({ title: "Appendix" });
+  s = content("Appendix: glossary", "Appendix");
+  {
+    const terms = [
+      ["PSF / kernel k", "the blur pattern a single point is smeared into"],
+      ["P1 / P2", "training kernels / unseen kernels (interp: new settings; extrap: new family)"],
+      ["σ", "noise level, on the 0–255 scale"],
+      ["PSNR / SSIM", "pixel accuracy (dB) / structural similarity (0–1); higher is better"],
+      ["LPIPS", "learned perceptual distance; lower is better"],
+      ["Data consistency", "RMSE of re-blurred output vs. observation"],
+      ["EPLL / GMM", "patch prior: a Gaussian mixture over 8×8 image patches"],
+      ["TV / FISTA", "total-variation prior / accelerated proximal-gradient solver"],
+      ["ADMM / HQS", "splitting methods that alternate a data step and a prior step"],
+      ["Unrolled network", "a fixed number of solver iterations with learned parts (M3)"],
+      ["PGD", "projected gradient ascent: finds the worst small perturbation"],
+      ["Transfer attack", "perturbation optimised against one model, applied to another"],
+      ["Inverse crime", "testing on data made with exactly the inverted model and no noise"],
+      ["K-sweep / σ-oracle", "vary GMM components / specialist trained for one noise level"],
+    ];
+    const half = Math.ceil(terms.length / 2);
+    [terms.slice(0, half), terms.slice(half)].forEach((chunk, c) => {
+      s.addTable(chunk.map(([t, d]) => [{ text: t, options: { bold: true } }, d]), {
+        x: 0.6 + c * 6.15, y: 1.45, w: 5.95, colW: [1.75, 4.2], fontSize: 13, color: C.text1, rowH: 0.7,
+        border: { type: "solid", pt: 0.5, color: "D5DAE1" }, valign: "middle", fill: { color: C.background1 },
+      });
+    });
+  }
+  s.addNotes("Reference slide for questions; not presented.");
 
   await pres.writeFile({ fileName: OUT });
   await applyTheme(OUT, THEME);

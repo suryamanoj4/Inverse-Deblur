@@ -232,6 +232,10 @@ def main() -> None:
             f"{SET_TEX[s]} & {kind} & {fam_blur[(s, kind)]:.2f} & " + " & ".join(bold_best(values)) + r" \\"
         )
     write("table_family.tex", "\n".join(lines) + "\n")
+    numbers["family"] = {
+        m: {f"{s}/{kind}": fam[m][(s, kind)] for s, kind in groups} for m in TABLE_METHODS
+    }
+    numbers["family"]["blurred"] = {f"{s}/{kind}": fam_blur[(s, kind)] for s, kind in groups}
 
     # ---- data-consistency residual (in /255 units) -------------------------
     lines = []
@@ -243,6 +247,10 @@ def main() -> None:
         if s != SETS[-1]:
             lines.append(r"\midrule")
     write("table_residual.tex", "\n".join(lines) + "\n")
+    numbers["residual_255"] = {
+        m: {f"{s}/{sig}": 255 * by_cell[m]["residual"][(s, sig)] for s in SETS for sig in SIGMAS}
+        for m in TABLE_METHODS
+    }
 
     # ---- oracle-sigma specialists vs the single NAFNet ---------------------
     lines = []
