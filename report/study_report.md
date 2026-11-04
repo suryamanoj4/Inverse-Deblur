@@ -5,7 +5,7 @@ authors:
   - Surya Manoj Pentakota (2026701036)
   - Kevin Paul Reddy Janagari (2026900006)
 affiliation: IIIT Hyderabad
-date: 2026-11-02
+date: 2026-11-04
 status: consolidated
 tags:
   - deblurring
@@ -23,7 +23,7 @@ tags:
 
 **Surya Manoj Pentakota (2026701036)** · **Kevin Paul Reddy Janagari (2026900006)** · IIIT Hyderabad
 
-*Consolidated report — November 2, 2026*
+*Consolidated report — November 4, 2026*
 
 ## Abstract
 
@@ -45,7 +45,7 @@ We answer with a controlled comparison on BSDS500 under one degradation protocol
 | **Is the deep network stable (H3)?** | Partly. Under a transfer attack, EPLL is 2–17× more stable at σ≥5 (99–100% of cells). At σ=1 it is more stable in distribution (92% of cells) but not under kernel mismatch (38–41%). EPLL's absolute PSNR after the attack stays ahead everywhere. |
 | **What is still missing?** | M3 (the physics-aware deep control), a per-method white-box H3 attack on M2, and real-blur evaluation. |
 
-The headline is neither “classical beats deep” nor the reverse: **physics-awareness is what transfers**, and the data-only network's failure mode is specific and measurable.
+The headline is neither “classical beats deep” nor the reverse: **physics-awareness is what transfers**, and the data-only network's failure mode is specific and measurable. The exact architectures, data budgets and compute budgets are in §1.7–1.8.
 
 ---
 
@@ -162,6 +162,72 @@ The regularisation weight $\lambda$ of FISTA-TV and ADMM-EPLL is tuned per noise
 PSNR and SSIM against the sharp image, and the data-consistency residual $\mathrm{RMSE}(k * \hat{x} - y)$. LPIPS (AlexNet; grayscale replicated to three channels) is reported on a seeded 50-image test subset (Section 8). Stability under small perturbations (H3) is measured with a transfer attack (Section 7).
 
 Paired comparisons use the image as the unit: each image's PSNR is averaged over the PSFs of a set, giving 200 pairs per (set, σ). We report the mean and median difference, the fraction of images won, and Wilcoxon signed-rank p-values with Holm correction over all 30 tests.
+
+### 1.7 Architectures
+
+All learned models operate on single-channel luminance. The M1 networks predict a residual added to the input; M2 has no neural network.
+
+| Method | Architecture | Depth / blocks | Parameters | Inputs | Output |
+|---|---|---|---:|---|---|
+| **NAFNet** (M1 primary) | 4-level U-Net, width 32 | encoder blocks `[1,1,1,28]` + 1 middle + decoder `[1,1,1,1]` = **36 NAFBlocks**; 4 down / 4 up; 226 conv layers, 72 LayerNorm2d | **17.1 M** | $y$ (1×H×W) | $\hat{x}=y+\text{residual}$ |
+| **U-Net** (M1 baseline) | 4-level U-Net, width 32 | two 3×3 conv+ReLU per level; max-pool down, transposed-conv up, skip connections; 23 conv layers (19 conv + 4 transposed) | **7.8 M** | $y$ | $\hat{x}=y+\text{residual}$ |
+| **Wiener** (M2) | no network | closed-form Fourier filter | 0 | $y,k,\sigma$ | $\hat{x}$ |
+| **Richardson–Lucy** (M2) | no network | 30 multiplicative iterations | 0 | $y,k$ | $\hat{x}$ |
+| **FISTA-TV** (M2) | no network | 100 outer FISTA × 30 inner ADMM for the TV prox | 0 | $y,k,\sigma,\lambda$ | $\hat{x}$ |
+| **ADMM-EPLL** (M2) | no network | 10 HQS iterations; GMM prior with 200 components on 8×8 patches | 0 network; GMM prior | $y,k,\sigma,\lambda$ | $\hat{x}$ |
+| **USRNet** (M3) | unrolled HQS | 8 iterations; closed-form FFT data module + 3-scale ResUNet prior + hyperparameter MLP | not trained | $y,k,\sigma$ | $\hat{x}$ |
+| **ISTA-Net** (M3) | unrolled ISTA | 10 phases; learned analysis/synthesis CNNs; soft threshold | not trained | $y,k,\sigma$ | $\hat{x}$ |
+| **LISTA** (M3) | unrolled ISTA | 10 iterations; shared 1×1 analysis/synthesis; learnable step/threshold | not trained | $y,k,\sigma$ | $\hat{x}$ |
+
+**NAFBlock.** LayerNorm2d → 1×1 conv → 3×3 depthwise conv → SimpleGate (multiply the two channel halves) → simplified channel attention (global pool + 1×1 conv) → 1×1 conv, added back with a learned scale $\beta$; then LayerNorm2d → 1×1 conv → SimpleGate → 1×1 conv, added with $\gamma$. There is no ReLU/GELU: the gating multiplies channels. The 36 blocks are distributed across scales, with 28 at the deepest encoder level; the network is not 36 sequential layers.
+
+**M2 has no trained network.** Wiener is a closed-form linear filter; Richardson–Lucy is an iterative maximum-likelihood update; FISTA-TV and ADMM-EPLL are iterative solvers around a fixed prior. The only learned object in M2 is the GMM prior (200 components, full covariance, zero-mean 8×8 patches, EM on clean patches). The K-sweep replaces that prior with $K=1,4,16,64,200$ components while keeping the solver fixed.
+
+**M3** is implemented but has not been trained. The counts above are implementation details, not trained results; its planned budget is in §1.8.
+
+### 1.8 Training and testing budgets
+
+#### Data budget
+
+| Component | Unique images | Sampled data | Conditions |
+|---|---:|---|---|
+| NAFNet | 200 train | ≈1.57 M patches (98k iterations × batch 16) | 12 $P_1$ kernels × 5 noise levels; 128×128 random crops; rot90 + flip before degradation; kernel and σ drawn per patch |
+| U-Net | 200 train | ≈1.50 M patches (94k × 16) | same protocol |
+| 5 per-σ NAFNet specialists | 200 train | 160k patches each; 800k total | 10k iterations each at one σ; 12 $P_1$ kernels |
+| EPLL/GMM prior | 200 train | **100,000 clean 8×8 patches** | DC removed; EM; one prior per $K$ |
+| M2 solvers | — | **no training** | λ selected on val only |
+| M3 | — | **not trained** | planned 30k iterations |
+
+The 1.57 M patches are **samples, not independent images**: they are random crops from the same 200 training images, re-degraded with a freshly drawn kernel and noise level. The GMM is trained on clean patches only; it never sees a degraded image.
+
+#### Training budget
+
+| Component | Iterations | Batch | Optimiser / schedule | Wall time |
+|---|---:|---:|---|---|
+| NAFNet | 100k max; best at 98k | 16 | AdamW, lr $2\times10^{-4}$, wd $10^{-4}$, 1k warm-up + cosine, grad clip 1.0, L2 loss, early stop patience 4 | **2.8 h** on RTX 3090 Ti |
+| U-Net | 100k max; best at 94k | 16 | same | **0.5 h** on RTX 3090 Ti |
+| 5 per-σ specialists | 10k each | 16 | fine-tune from the NAFNet checkpoint | ≈1.4 h total (linear estimate) |
+| GMM, $K=200$ | 20 EM iterations | 100k patches | EM | **7 min CPU** |
+| GMM, $K$-sweep | 20 EM iterations each | 100k patches | EM | not separately timed; smaller $K$ is faster |
+| M3 | planned 30k | 8 | AdamW, lr $10^{-4}$ | not trained |
+
+**Checkpoint selection.** M1 keeps the checkpoint with the highest mean PSNR over the 60-cell $P_1$ grid on a fixed **10-image val subset**; validation runs every 2k iterations. The test split is never used for selection. **λ selection** for M2 uses the same 10 val images over $P_1$ (12 kernels × 5 σ = 600 cells) and 10 candidate values, i.e. 6,000 solver runs per method; it is hyperparameter selection, not training.
+
+#### Testing budget
+
+| Experiment | Images | Cells per method | Methods | Approximate cost |
+|---|---:|---:|---:|---|
+| Main grid | 200 test | 27,000 (27 kernels × 5 σ) | 6 | M1 negligible; EPLL ≈6 GPU-h, FISTA ≈16 GPU-h (0.8 / 2.1 s per image) |
+| M1 checkpoint validation | 10 val | 600 per check | 2 | 50 checks; negligible |
+| M2 λ tuning | 10 val | 600 × 10 λ | 2 | ≈1.3 GPU-h (EPLL), ≈3.5 GPU-h (FISTA) |
+| GMM $K$-sweep | 50 test | 5,400 per $K$ (27 × 4 σ) | 1 | 5 $K$ = 27,000 EPLL solves ≈6 GPU-h |
+| LPIPS | 50 test | 5,400 (27 × 4 σ) | 6 | ≈1.2 GPU-h (EPLL), ≈3.2 GPU-h (FISTA); M1 negligible |
+| H3 stability | 10 test | 3,240 (27 × 4 σ × 3 ε) | 2 | ≈45 min GPU for the M2 solves, plus 20-step PGD on M1 |
+| Texture (H2) | 200 test | reuses main grid | — | no extra inference |
+
+“Cells” means image × PSF × σ, or image × PSF × σ × ε for H3. Costs are **single-GPU equivalents**; the actual runs were sharded across processes. M1 inference is milliseconds per image; the M2 iterative solvers dominate evaluation.
+
+**Compute summary.** Training is ≈4.7 GPU-hours (NAFNet 2.8 + U-Net 0.5 + specialists ≈1.4) plus a few CPU minutes for the GMM. Evaluation is ≈30–40 GPU-hours single-GPU equivalent, dominated by FISTA-TV and ADMM-EPLL on the 27,000-cell grid, plus the K-sweep and H3. The proposal’s original 10–20 GPU-hour estimate covered a smaller grid; the full M1/M2 evaluation is larger.
 
 ---
 
