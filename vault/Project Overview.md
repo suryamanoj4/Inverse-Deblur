@@ -1,7 +1,7 @@
 ---
 title: Project Overview — Inverse Function Learning for Image Deblurring
 date: 2026-08-30
-updated: 2026-10-20
+updated: 2026-11-11
 tags:
   - project
   - deblurring
@@ -66,6 +66,12 @@ The primary M1 is **one model** trained on $P_1$ (4 Gaussian + 8 motion kernels)
 - The three arms above, including the $K$-component GMM sweep and the unrolling ladder.
 - Kernel-mismatch robustness and perturbation stability.
 
+**Phase 2 (after the mid-evaluation, planned)**
+
+- A synthetic training-image pipeline (pretrained latent diffusion, ~2,000 images after quality and leakage checks), used identically by every learned component of every arm; real val/test unchanged.
+- Protocol v2: seven kernel families instead of three, including random-trajectory camera shake and real recorded kernels; 8-bit quantized observations.
+- Training and evaluating M3. Details in [[Proposed Approach]] §12.
+
 **Stretch**
 
 - GoPro blind deblurring (Tier 2). Without a kernel-estimation stage this is an out-of-protocol stress test, not part of the controlled comparison.
@@ -84,12 +90,15 @@ The core comparison trains three artifacts (NAFNet, the EPLL prior, USRNet); the
 
 Tier 1 uses BSDS500 with the locked PSF sets: $P_1$ (4 Gaussian + 8 motion kernels) for training and in-distribution evaluation, $P_2$-interp (unseen parameters of the same families) and $P_2$-extrap (defocus disks, an unseen family) for kernel mismatch. Noise grid $\sigma \in \{0,1,5,15,25\}/255$, circular boundary handling, luminance images. Metrics: PSNR, SSIM, LPIPS, data-consistency residual, kernel-mismatch PSNR drop, and perturbation stability; paired Wilcoxon tests with multiplicity control. Checkpoint selection uses mean val PSNR over the fixed grid on a 10-image seeded subset of the sorted val list (IDs logged with the protocol); never per-condition selection. The locked protocol is in [[Proposed Approach]] §7.
 
+Phase 2 evaluates the same metrics on protocol v2, adds two hypotheses (H4: more data helps the deep arms in distribution but not under mismatch; H5: more training kernel families narrow M1's gap on unseen parameters but not on unseen families) and three pre-registered endpoints ([[Proposed Approach]] §12.4).
+
 ## 7. Deliverables
 
 - A reproducible degradation and evaluation protocol.
 - The three-arm results table, kernel-mismatch curves, and stability figure.
 - Source code for every method in the comparison.
 - A written report describing the protocol, results, and the failure signature that motivates future work.
+- Phase 2: the versioned synthetic training set (`syn-v1`, with generation manifest and QC report) and the v2 kernel library, both frozen and released with the protocol.
 
 ## 8. Key references
 
@@ -108,14 +117,10 @@ Tier 1 uses BSDS500 with the locked PSF sets: $P_1$ (4 Gaussian + 8 motion kerne
 - Zhang et al. (2018). SRMD: multiple-degradation super-resolution.
 - Gandikota et al. (2022). Adversarial robustness of deep image deblurring.
 
-Full bibliography: [[Proposed Approach]] §12.
+Full bibliography: [[Proposed Approach]] §13.
 
 ## 9. Status
 
-Active. M1 and M2 have a complete comparison, reported in
-`report/study_report.md`, including the H2 texture and H3 stability
-analyses and LPIPS. Key results: kernel mismatch is supported; H2 (texture) is
-not supported; H3 holds at σ≥5 but only in distribution at σ=1; under mismatch
-at σ=1, EPLL's weak λ amplifies perturbations. The M3 arm (USRNet / ISTA-Net /
-LISTA) is implemented but not yet trained; a per-method white-box H3 attack on
-M2 is a follow-up.
+Active. **Mid-evaluation completed (November 2026).** M1 and M2 have a complete comparison under protocol v1, reported in `report/study_report.md`, including the H2 texture and H3 stability analyses and LPIPS. Key results: kernel mismatch is supported; H2 (texture) is not supported; H3 holds at σ≥5 but only in distribution at σ=1. A follow-up check showed that NAFNet does not memorise its training images but does overfit the training kernels (`report/nafnet_overfitting.pdf`).
+
+**Reviewer feedback and Phase 2.** The reviewer suggested that M1 may be data-hungry or overfit, and that three kernel families are too few. Phase 2 responds with a real-data learning curve, a synthetic training-image pipeline shared by all arms, and protocol v2 with seven kernel families; it also trains M3 (USRNet / ISTA-Net / LISTA, implemented but not yet trained) and fixes the σ = 0 inverse crime. The plan, compute budget (≈100–135 GPU-h) and four-week timeline are in [[Proposed Approach]] §12. **No Phase 2 code is written yet.**

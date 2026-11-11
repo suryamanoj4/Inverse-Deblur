@@ -43,11 +43,12 @@ Only M1 and M3 train end-to-end networks; M2 learns a prior and runs a per-image
 - M1 and M3 train once on $P_1$ × all noise levels; M2's solver is per-image and its λ values are scalars, not models.
 - Full inventory, checkpoint layout, and ablation roles: `vault/Proposed Approach.md` §5.1.
 
-**Protocol snapshot.** M1 is one model trained on $P_1$ (4 Gaussian + 8 motion kernels) across all five noise levels, with no $k$ or $\sigma$ at train or test time. Kernel mismatch is evaluated on $P_2$-interp (unseen parameters of the same families) and $P_2$-extrap (defocus disks, an unseen family). Checkpoint selection uses mean val PSNR over the fixed 60-cell grid on a 10-image seeded subset of the sorted val list (IDs logged with the protocol); per-condition selection is not allowed. Learned arms use AdamW and L2 loss. The complete manifest — PSF membership, sampling policy, checkpoint rule, hyperparameters — is written to `artifacts/protocol/` by `scripts/setup_datasets.py --write-protocol`.
+**Protocol snapshot (v1, used for the mid-evaluation results; v2 is planned, see “Phase 2 plan”).** M1 is one model trained on $P_1$ (4 Gaussian + 8 motion kernels) across all five noise levels, with no $k$ or $\sigma$ at train or test time. Kernel mismatch is evaluated on $P_2$-interp (unseen parameters of the same families) and $P_2$-extrap (defocus disks, an unseen family). Checkpoint selection uses mean val PSNR over the fixed 60-cell grid on a 10-image seeded subset of the sorted val list (IDs logged with the protocol); per-condition selection is not allowed. Learned arms use AdamW and L2 loss. The complete manifest — PSF membership, sampling policy, checkpoint rule, hyperparameters — is written to `artifacts/protocol/` by `scripts/setup_datasets.py --write-protocol`.
 
 ## Evaluation
 
 - **Tier 1 (core):** BSDS500, synthetically degraded with a shared PSF library (Gaussian, procedural linear motion, defocus) and noise grid $\sigma \in \{0, 1, 5, 15, 25\}/255$, circular boundary handling.
+- **Phase 2 (planned):** training pool expanded with synthetic images (`syn-v1`) for every arm; protocol v2 with seven kernel families and 8-bit quantized observations.
 - **Tier 2 (stretch):** GoPro (3214 real blurry/sharp pairs) for blind deblurring.
 - **Metrics:** PSNR, SSIM, LPIPS, data-consistency residual, kernel-mismatch robustness, and stability under small perturbations; paired Wilcoxon tests with multiplicity control.
 
@@ -280,8 +281,40 @@ Key results:
 - **LPIPS:** NAFNet is perceptually best in distribution; FISTA-TV is best
   under kernel mismatch.
 
-The remaining experiments are the M3 arm and a per-method white-box H3 attack
-on M2.
+A follow-up check (`scripts/analyze_overfit.py`, `report/nafnet_overfitting.pdf`)
+showed that NAFNet does not memorise its training images (train−test gap −0.04 dB
+vs −0.08 dB for the EPLL control) but does overfit the training kernels.
+
+## Phase 2 plan (after the mid-evaluation)
+
+The mid-evaluation reviewer suggested that M1 may be data-hungry or overfit, and
+that three kernel families are too few. Phase 2 is **planned, not implemented**;
+the full specification is in `vault/Proposed Approach.md` §12.
+
+- **More training data, identical for every arm.** A synthetic-image pipeline
+  (pretrained latent diffusion, ~2,000 images after sharpness, statistics and
+  BSDS val/test leakage checks) is mixed 50/50 with the 200 real training images.
+  NAFNet, U-Net, the EPLL GMM prior and the M3 networks all train on the same
+  mixture; validation and test stay real. A real-data learning curve
+  (50 / 100 / 200 images), a synthetic-only run and a DIV2K real-data control
+  separate "more data" from synthetic-domain effects.
+- **More kernel variety (protocol v2).** Seven families instead of three:
+  isotropic and anisotropic Gaussian, linear motion and random-trajectory camera
+  shake for training (≈400 kernels instead of 12); defocus, real recorded
+  camera-shake kernels (Levin, Sun, Köhler) and Airy/Moffat profiles as unseen
+  families. Observations are quantized to 8 bits, which removes the σ = 0
+  inverse crime.
+- **M3.** Fix USRNet (padding, output) and ISTA-Net/LISTA (skip connections),
+  then train and evaluate all three.
+- **New hypotheses.** H4: more data helps the deep arms in distribution but not
+  under kernel mismatch. H5: more training kernel families narrow M1's gap on
+  unseen parameters but not on unseen families.
+- **Budget.** ≈100–135 GPU-hours over about four weeks. v1 results stay frozen
+  as the mid-evaluation reference; every table states its protocol and data
+  version.
+
+Remaining follow-ups beyond Phase 2: a per-method white-box H3 attack on M2 and
+real-blur (GoPro) evaluation.
 
 Install the learned-arm dependencies (PyTorch and LPIPS) with
 `pip install -r requirements.txt`; for a CPU-only PyTorch wheel, use the

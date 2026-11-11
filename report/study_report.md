@@ -5,7 +5,7 @@ authors:
   - Surya Manoj Pentakota (2026701036)
   - Kevin Paul Reddy Janagari (2026900006)
 affiliation: IIIT Hyderabad
-date: 2026-11-04
+date: 2026-11-11
 status: consolidated
 tags:
   - deblurring
@@ -23,7 +23,7 @@ tags:
 
 **Surya Manoj Pentakota (2026701036)** · **Kevin Paul Reddy Janagari (2026900006)** · IIIT Hyderabad
 
-*Consolidated report — November 4, 2026*
+*Consolidated report — November 11, 2026 · results under protocol v1 (mid-evaluation); Phase 2 planned (§11)*
 
 ## Abstract
 
@@ -43,7 +43,8 @@ We answer with a controlled comparison on BSDS500 under one degradation protocol
 | **Does a deeper classical prior help?** | Quickly saturating. $K=1\to4$ GMM components adds 1.8 dB; $K=200$ adds 0.02 dB over $K=64$. It improves M2 uniformly but does not change mismatch robustness. |
 | **Does prior depth explain texture (H2)?** | No. NAFNet's in-distribution advantage is on **smooth** images; EPLL is slightly better on textured ones. This is the opposite of H2. |
 | **Is the deep network stable (H3)?** | Partly. Under a transfer attack, EPLL is 2–17× more stable at σ≥5 (99–100% of cells). At σ=1 it is more stable in distribution (92% of cells) but not under kernel mismatch (38–41%). EPLL's absolute PSNR after the attack stays ahead everywhere. |
-| **What is still missing?** | M3 (the physics-aware deep control), a per-method white-box H3 attack on M2, and real-blur evaluation. |
+| **Did NAFNet overfit?** | Not its training images: on identical conditions its train−test gap is −0.04 dB, like the EPLL control's −0.08 dB. It does overfit the training **kernels** (see the mismatch rows above). Whether more images would help is untested; Phase 2 measures it. |
+| **What is still missing?** | M3 (the physics-aware deep control), the Phase 2 data and kernel-variety experiments requested at the mid-evaluation (§11), a per-method white-box H3 attack on M2, and real-blur evaluation. |
 
 The headline is neither “classical beats deep” nor the reverse: **physics-awareness is what transfers**, and the data-only network's failure mode is specific and measurable. The exact architectures, data budgets and compute budgets are in §1.7–1.8.
 
@@ -678,14 +679,20 @@ The raw per-cell evaluation CSVs and the `sigma0_quantized` CSVs used by `script
 - **H3:** transfer attack run on all three PSF sets (Section 7); supported at σ ≥ 5/255. At σ = 1/255 it holds in distribution (92% of cells) but not under kernel mismatch (38–41%). M3 is needed to attribute this to A-awareness rather than prior depth.
 - **LPIPS:** all methods on the 50-image test subset (Section 8).
 - **σ=0:** excluded from headline averages; 8-bit check reported. Future runs should quantize observations or add a noise floor to the protocol.
+- **Overfitting check (after the mid-evaluation):** NAFNet scored on 20 training vs 20 test images under identical conditions shows no memorisation (gap −0.04 dB vs −0.08 dB for the EPLL control); `scripts/analyze_overfit.py`, `report/nafnet_overfitting.pdf`.
 
-### What remains
+### Mid-evaluation feedback
 
-1. **Train M3** (USRNet, then ISTA-Net/LISTA) on the same protocol and add it to the PSNR, mismatch, texture and stability tables. This is the missing control that separates physics-awareness from prior depth.
-2. **Run a per-method white-box H3 attack on M2.** The current H3 result uses a transfer attack: NAFNet's worst-case perturbation, not M2's. A gradient-enabled FISTA/EPLL would give M2's own worst case.
-3. **Ship or regenerate the raw per-cell CSVs** used by the analysis scripts, and record the exact λ values from the H3/LPIPS runs in their metadata.
-4. **Evaluate real blur** (GoPro) and blind kernel estimation, which are outside the controlled protocol but important for external validity.
-5. **Add a second seed** for the headline M1 model; several NAFNet-vs-EPLL differences are only a few tenths of a dB.
+The reviewer suggested that (1) M1 may be data-hungry or overfit, and (2) three kernel families are too few. The overfitting part is answered above. Both are addressed by Phase 2, specified in `vault/Proposed Approach.md` §12. All results in this report are **protocol v1** and stay frozen as the mid-evaluation reference.
+
+### What remains (Phase 2 plan, not yet implemented)
+
+1. **Fix and train M3** (USRNet padding and output; skip connections for ISTA-Net/LISTA; then USRNet, ISTA-Net, LISTA) and add it to every table. This is the missing control that separates physics-awareness from prior depth.
+2. **Test data-hunger directly:** NAFNet trained on 50 / 100 / 200 real images.
+3. **Expand the training data for all arms identically:** ~2,000 synthetic images from a pretrained latent-diffusion model, after sharpness, statistics and BSDS val/test leakage checks, mixed 50/50 with the real images. NAFNet, U-Net, the EPLL GMM prior and the M3 networks all use the same mixture; val/test stay real. Controls: synthetic-only NAFNet and real + DIV2K NAFNet.
+4. **Protocol v2 with more kernel variety:** seven families (isotropic and anisotropic Gaussian, linear motion, random-trajectory camera shake for training; defocus, real recorded camera shake, Airy/Moffat as unseen families) and 8-bit quantized observations. Re-run the three-arm comparison, H2, H3 and LPIPS on v2.
+5. **Hypotheses and endpoints added for Phase 2:** H4 (more data helps the deep arms in distribution but not under mismatch) and H5 (more training kernel families narrow M1's gap on unseen parameters but not on unseen families), with pre-registered endpoints E1–E3.
+6. **Still open from Phase 1:** a per-method white-box H3 attack on M2; shipping or regenerating the raw per-cell CSVs; real blur (GoPro); a second seed for the headline M1 model.
 
 ---
 

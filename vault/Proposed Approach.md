@@ -1,7 +1,7 @@
 ---
 title: Proposed Approach — Three-Arm Comparison
 date: 2026-10-19
-updated: 2026-10-20
+updated: 2026-11-11
 tags:
   - project
   - deblurring
@@ -21,6 +21,9 @@ status: active
 > [!abstract] Summary
 > Three **established** methods, one controlled protocol: **M1** (data-only CNN), **M2** (physics-aware classical-ML solver), **M3** (physics-aware unrolled network, the control). No new architecture in the core study — the comparison itself is the contribution, and its failure signature motivates the follow-up method.
 
+> [!todo] Phase 2 (after the mid-evaluation)
+> In response to the reviewer, Phase 2 adds a synthetic training-image pipeline shared by all arms and a wider kernel library (protocol v2), and trains M3. Sections 0–11 describe the **v1** protocol used for the mid-evaluation results; the v2 changes are specified in **§12** and are not implemented yet.
+
 Related: [[Project Overview]] · Proposal PDF: `proposal.pdf`
 
 > [!note] Scope
@@ -34,9 +37,9 @@ Related: [[Project Overview]] · Proposal PDF: `proposal.pdf`
 |---|---|
 | Forward model | $y = Ax + \varepsilon$, $\varepsilon \sim \mathcal{N}(0,\sigma^2)$ |
 | Operator | $A$ = circular convolution with PSF $k$; diagonalized by FFT: $A = \mathcal{F}^{-1}\mathrm{diag}(\kappa)\mathcal{F}$, $\kappa = \mathcal{F}k$ |
-| PSF library | Gaussian $\sigma_k \in \{0.7, 1.2, 1.6, 2.0\}$; procedural linear motion kernels; defocus disks |
+| PSF library | **v1:** Gaussian $\sigma_k \in \{0.7, 1.2, 1.6, 2.0\}$; procedural linear motion kernels; defocus disks. **v2 (planned, §12.3):** 7 families incl. anisotropic Gaussian, random-trajectory camera shake, real recorded kernels, Airy/Moffat |
 | Noise grid | $\sigma \in \{0, 1, 5, 15, 25\}/255$ |
-| Data | BSDS500 splits (200 train / 100 val / 200 test), 128×128 patches, circular boundary |
+| Data | BSDS500 splits (200 train / 100 val / 200 test), 128×128 patches, circular boundary. **v2 (planned, §12.2):** training pool = 200 real + ~2,000 synthetic images (`syn-v1`), identical for every arm; val/test stay real |
 | Metrics | PSNR, SSIM, LPIPS, data-consistency residual $\lVert A\hat{x}-y\rVert_2$, kernel-mismatch PSNR drop, PGD stability |
 
 Every method consumes the same degraded pairs and is scored by the same harness. No method gets a different PSF, noise level, boundary condition, or test set.
@@ -278,6 +281,9 @@ checkpoints/
 
 Evaluation artifacts land in `artifacts/eval/` (CSV, summary JSON, metadata JSON).
 
+> [!note] Phase 2 artifacts (planned)
+> Phase 2 adds, per training-data and protocol version: NAFNet learning-curve runs (50 / 100 / 200 real images), NAFNet / U-Net / GMM-200 trained on real + `syn-v1`, two NAFNet controls (synthetic only; real + DIV2K), the three M3 networks, and the v2 retraining of every arm. Checkpoints will be namespaced by version, e.g. `checkpoints/v2/m1/nafnet_syn/`. See §12.4.
+
 ---
 
 ## 6. Hypotheses, stated over the three arms
@@ -288,6 +294,9 @@ Evaluation artifacts land in `artifacts/eval/` (CSV, summary JSON, metadata JSON
 
 > [!note] H3 implementation
 > See §6.1. The current script runs a **transfer attack**; a per-method white-box M2 attack is a follow-up.
+
+> [!note] Phase 2 hypotheses
+> Two hypotheses are added for Phase 2 (§12.4): **H4 (data)**, that more training images help the deep arms in distribution but not under kernel mismatch, and **H5 (kernel diversity)**, that more training kernel families narrow M1's gap on unseen parameters but not on unseen families.
 
 ### 6.1 H3 stability experiment (implemented)
 
@@ -344,6 +353,8 @@ python3 scripts/stability_test.py --data-root data \
 | Tier | Dataset | Size / split | Role |
 |---|---|---|---|
 | **1 (core)** | **BSDS500** (Arbeláez et al., TPAMI 2011) | 500 images: **200 train / 100 val / 200 test** | Controlled synthetic comparison |
+| **1b (Phase 2, planned)** | **`syn-v1`** synthetic images from a pretrained latent-diffusion model (§12.2) | ~2,000 after QC; **training only** | Training-pool expansion shared by every learned component; never in val/test |
+| **1c (Phase 2 control, planned)** | **DIV2K** train (real) | 800 images; training only | Separates "more data" from synthetic-domain effects |
 | **2 (stretch)** | **GoPro** (Nah et al., CVPR 2017) | 3,214 pairs: **2,103 train / 1,111 test**, no kernels | Blind deblurring; out-of-protocol stress test unless kernel estimation is added |
 
 Dataset setup is a single opt-in entry point:
@@ -358,7 +369,7 @@ never downloaded implicitly. `--check` inspects the local layout without
 downloading. `protocol.json` / `manifest.json` record the $P_1$/$P_2$
 membership, sampling policy, checkpoint rule, and learned-arm hyperparameters.
 
-**Not used:** Set5 / Set14 / Urban100 / Kodak (SR benchmarks). DIV2K is allowed only as an optional *data-scale ablation* applied to **all** learned priors.
+**Not used:** Set5 / Set14 / Urban100 / Kodak (SR benchmarks). DIV2K is allowed only as an optional *data-scale ablation* applied to **all** learned priors; Phase 2 uses it as the real-data control (§12.4, 2A-3).
 
 ### 7.2 Locked preprocessing decisions
 
@@ -366,13 +377,13 @@ membership, sampling policy, checkpoint rule, and learned-arm hyperparameters.
 |---|---|---|
 | BSDS version | **BSDS500**, standard directory split | Resolves the proposal's ambiguous "BSDS300/500"; matches the TPAMI citation |
 | Color space | **Luminance only** (Rec.601), core protocol | EPLL/K-SVD are grayscale; keeps all arms comparable |
-| Training data | **BSDS500 train only**, for every learned component (GMM prior, CNN weights, unrolled nets) | Prevents cross-arm training-data confounds and GMM leakage |
+| Training data | **v1: BSDS500 train only**, for every learned component (GMM prior, CNN weights, unrolled nets). **v2 (planned):** BSDS500 train + `syn-v1`, same mixture ($p_\text{real}=0.5$) for every learned component | Prevents cross-arm training-data confounds and GMM leakage |
 | Validation | **BSDS500 val only** for $\lambda$ tuning and early stopping | Same val for every arm; test never used for model selection |
 | Test | **BSDS500 test**, full images; 256×256 centre crops as secondary | Circular degradation makes full-image FFT evaluation exact |
 | Patch protocol | Split **by image first**, then crop 128×128 patches | Patches from one image never straddle splits |
 | Augmentation | Flips + 90° rotations, identical for all learned priors | Removes augmentation as a confound |
 | PSF library | Gaussian $\sigma_k \in \{0.7,1.2,1.6,2.0\}$; 8 procedural linear motion kernels (length × angle); defocus radii $\{3,5,7,9\}$ | Kernels generated in code, no download; official Levin kernels optional, outside the protocol |
-| Noise | $\sigma \in \{0,1,5,15,25\}/255$, additive white Gaussian, clipped to $[0,1]$ | Clipping is part of the observation model for every arm |
+| Noise | $\sigma \in \{0,1,5,15,25\}/255$, additive white Gaussian, clipped to $[0,1]$; **v2 (planned):** then quantized to 8 bits | Clipping is part of the observation model for every arm; quantization removes the σ = 0 inverse crime |
 | Boundary | Circular / FFT | Required by the closed-form data modules |
 
 ### 7.3 Protocol invariants (must be identical across arms)
@@ -401,6 +412,8 @@ membership, sampling policy, checkpoint rule, and learned-arm hyperparameters.
 | 9 | unified evaluation (`evaluation/`, `scripts/evaluate.py`) with paired per-cell baseline | ✅ implemented + tested |
 | 10 | consolidated report (`report/study_report.md`, `report/generated/`) | ✅ M1/M2 + H2/H3/LPIPS results; M3 pending |
 | H3 | stability (`metrics/stability.py`, `scripts/stability_test.py`) | ✅ implemented + run (transfer, 10 images); report §7 |
+| Overfit check | `scripts/analyze_overfit.py`, `report/nafnet_overfitting.pdf` | ✅ run: no image memorisation; kernel-distribution overfitting |
+| Phase 2 | M3 fixes, synthetic pipeline, kernel library v2, mixture sampler, batched M2 solvers (§12.6) | 📝 planned, not implemented |
 
 ---
 
@@ -502,7 +515,172 @@ no-restoration baseline.
 
 ---
 
-## 12. References
+## 12. Phase 2 plan (after the mid-evaluation)
+
+> [!abstract] Summary
+> The mid-evaluation reviewer raised two points: **(R1)** M1 may be data-hungry or overfit, and **(R2)** three kernel families are too few. Phase 2 answers both without breaking the controlled comparison. **(1)** A synthetic training-image pipeline (pretrained latent diffusion), used identically by every learned component of every arm. **(2)** Protocol **v2** with a wider kernel library, including real recorded camera-shake kernels. Validation and test stay real BSDS500 images. The v1 results reported at the mid-evaluation are frozen and remain the reference point. **Status: planned; no Phase 2 code is written yet.**
+
+### 12.0 Reviewer feedback and our response
+
+| # | Reviewer point | Evidence we already have | Phase 2 response |
+|---|---|---|---|
+| R1a | NAFNet may have **overfit** | No image memorisation: on identical conditions the train−test gap in gain is −0.04 dB for NAFNet vs −0.08 dB for the EPLL control (`report/nafnet_overfitting.pdf`, `scripts/analyze_overfit.py`). Validation PSNR never declines (best at 98k of 100k iterations). What it does overfit is the **training kernels** (gain +5.38 → +2.73 / +2.49 dB on $P_2$). | Report the check; attack the real failure with kernel variety (R2). |
+| R1b | NAFNet is **data-hungry** | Untested. More iterations would not help (flat curve); NAFNet beats the smaller U-Net by 0.7 dB on the same data. | Measure it directly (real-data learning curve), then add synthetic images to the training set of **all** arms (§12.2). |
+| R2 | Only **three kernel families** | v1 has isotropic Gaussian, linear motion and defocus disks. | Protocol v2 with 7 families, procedural training pools and real recorded kernels (§12.3). |
+| — | Carried over from mid-evaluation | M3 not trained; σ = 0 is an inverse crime; H3 is a transfer attack only. | Fix and train M3 first; quantize observations in v2; white-box M2 attack stays a follow-up. |
+
+### 12.1 Principles (non-negotiable for a fair comparison)
+
+1. **Same training data for every learned component of every arm.** M1 network weights, the M2 GMM prior and M3 network weights are all fitted on the same image pool with the same real/synthetic mixing ratio. Methods with no learned part (Wiener, Richardson–Lucy, FISTA-TV) are unaffected; this is stated in every table.
+2. **Validation and test stay real.** Synthetic images never enter validation, test, checkpoint selection or λ tuning. The 10-image val subset and the 200-image test split are unchanged.
+3. **Versioned protocols, never mixed.** v1 = mid-evaluation protocol (frozen). v2 = expanded kernels + quantized observations. Every table states its protocol version and training-data version.
+4. **Every change is an ablation before it becomes a default.** Synthetic data and kernel variety are each measured against the v1 baseline, then adopted for v2.
+5. **Pre-registered endpoints** (§12.4) are fixed before any Phase 2 run.
+
+### 12.2 Synthetic training data pipeline (`syn-v1`)
+
+**Goal.** Enlarge the training pool from 200 real images to about 2,200 (200 real + ~2,000 synthetic), with a scale point at ~5,000 if the learning curve is still rising.
+
+**Generator choice.**
+
+| Option | Diversity | Realism | Feasibility | Decision |
+|---|---|---|---|---|
+| Pretrained latent diffusion, text-to-image (Stable Diffusion 1.5 / SDXL-Turbo via `diffusers`) | High: prompt-controlled scenes | Photographic with good prompts; tends to smooth textures and shallow depth of field | Runs on the RTX 3090 Ti; fixed seeds make it reproducible | **Primary** |
+| Same model, image-to-image variations of BSDS **train** images (strength 0.3–0.5) | Medium; stays close to BSDS content | High | Same | Secondary, at most 25% of `syn-v1` |
+| GAN trained on our 200 images | Very low (200 images is far too few) | Poor | Not viable | Rejected |
+| Pretrained domain GANs (e.g. StyleGAN on LSUN) | Narrow (one category per model) | Good within the domain | Feasible | Rejected for diversity |
+| **Real extra data** (DIV2K, 800 train images) | High | Real | Download only | **Control** (separates "more data" from "synthetic artefacts") |
+
+**Pipeline steps.**
+
+1. **Prompt bank** mirroring BSDS500 content: animals, people, landscapes, architecture, plants, water, vehicles, objects and close-up textures, crossed with lighting/viewpoint modifiers and the suffix "sharp, in-focus photograph". Negative prompt: blur, bokeh, depth of field, motion blur, text, watermark, illustration, painting, 3D render. Shallow depth of field matters most: an already-blurred background would make the "sharp" target wrong.
+2. **Generation** at the model's native resolution with one fixed seed per image. A manifest records model id and revision, prompt, negative prompt, seed, steps, guidance scale and scheduler.
+3. **Preprocessing identical to BSDS500:** anti-aliased downsampling to 481×321 (landscape) or 321×481 (portrait), Rec. 601 luminance, lossless PNG. Whether to apply JPEG compression to match BSDS's JPEG statistics is decided once and recorded.
+4. **Quality control** (`scripts/check_synthetic.py`, planned):
+   - **sharpness:** reject images whose high-frequency energy (variance of the Laplacian) is below the 5th percentile of BSDS train;
+   - **degenerate content:** reject flat or low-entropy images, and images with text or watermarks;
+   - **near-duplicates** inside `syn-v1` (perceptual hash);
+   - **leakage:** nearest-neighbour check of every synthetic image against BSDS **val and test** using a perceptual hash and a deep embedding (CLIP/DINOv2); reject above a fixed similarity threshold;
+   - **statistics report** comparing `syn-v1` with BSDS train: gradient-magnitude histogram, radial power-spectrum slope, and the H2 texture score distribution.
+5. **Freeze.** SHA-256 per image, dataset name `syn-v1`, manifest stored with the protocol; never regenerated silently. Expected rejection rate 15–30%, so roughly 2,600 images are generated to keep 2,000.
+
+**Mixing.** The training sampler draws a real image with probability $p_\text{real}$ and a synthetic one otherwise. The primary setting is $p_\text{real}=0.5$; $p_\text{real}=1.0$ (real only, = v1) and $p_\text{real}=0$ (synthetic only, a domain-gap diagnostic) are ablations.
+
+**How each arm uses it.**
+
+| Arm | Component | Change |
+|---|---|---|
+| M1 | NAFNet, U-Net, per-σ specialists | Training patches drawn from the mixture |
+| M2 | EPLL GMM prior (K-sweep too) | Fitted on 8×8 patches drawn from the same mixture; patch budget raised from 100k to 200k |
+| M2 | Wiener, Richardson–Lucy, FISTA-TV | No learned part; unchanged |
+| M2 | λ (FISTA-TV, ADMM-EPLL) | Re-tuned on the real val subset whenever the prior changes |
+| M3 | USRNet, ISTA-Net, LISTA | Same sampler and mixture as M1 |
+
+**Dependencies (to add):** `diffusers`, `transformers`, `accelerate`, `imagehash`, `open_clip_torch` (or DINOv2). The model weights are a one-time download (about 2–7 GB) and their licence (CreativeML OpenRAIL-M / SDXL licence) must be cited.
+
+### 12.3 Kernel variety: protocol v2
+
+v1 has three families: isotropic Gaussian, linear motion and defocus disks. v2 has seven:
+
+| # | Family | Model and parameters | What it represents | Set |
+|---|---|---|---|---|
+| 1 | Isotropic Gaussian (v1) | $\sigma_k$ on a 0.2 grid in $[0.6, 2.4]$; interp between grid points | Mild optical softness | train / interp |
+| 2 | **Anisotropic Gaussian** | $\sigma_x \ne \sigma_y$ on a grid in $[0.6, 3]$, rotation $\theta$ at multiples of 15°; interp between grid points | Astigmatism, directional softness | train / interp |
+| 3 | Linear motion (v1) | length $\{5,9,13,17,21\}$ px at multiples of 15°; interp at lengths $\{7,11,15,19\}$ and angles offset by 7.5° | Straight camera or object motion | train / interp |
+| 4 | **Random-trajectory camera shake** | Boracchi & Foi (2012) random-walk trajectories (as used by DeblurGAN); shake intensity on a grid, training seeds; interp at intermediate intensities with held-out seeds | Realistic hand shake, curved paths | train / interp |
+| 5 | Defocus disk (v1) | radius 2–10 px | Out-of-focus lens | **extrap** |
+| 6 | **Real recorded camera shake** | Levin et al. (2009), 8 kernels (loader exists); Sun et al. (2013); Köhler et al. (2012), 12 kernels | Measured real blur, not procedural | **extrap** |
+| 7 | **Diffraction / turbulence** | Airy disk; Moffat profile (heavy tails) | Small apertures, atmospheric blur | **extrap** |
+
+**Set design.**
+
+- **$P_1$ training pool:** families 1–4 on their *training grids* (table above), about 100 kernels per family, about 400 in total (v1 had 12). The sampler draws one per patch, so the network sees far more kernel variety than in v1.
+- **$P_1$ test:** 24 kernels taken from the training pool (6 per family), as in v1, where the in-distribution test kernels are the training kernels.
+- **$P_2$-interp:** 24 kernels from families 1–4 with parameters *between* the training grid points (and held-out seeds for trajectories). Same kinds of blur, settings never seen; the same logic as v1.
+- **$P_2$-extrap:** families 5–7: unseen kinds of blur, including real measured kernels. Defocus stays here so v1 and v2 remain comparable.
+- **Kernel caps:** normalised to sum 1, support at most 31×31.
+- **Freeze:** all kernels saved as arrays with their parameters and seeds (`artifacts/protocol/v2/psfs.npz` + JSON, SHA-256).
+
+**Observation fix (from the σ = 0 inverse crime).** v2 quantizes every observation to 8 bits after noise and clipping, so σ = 0 becomes an honest condition instead of an exact inversion.
+
+### 12.4 Experiments, hypotheses and endpoints
+
+**Order.** Phase 2A answers the reviewer quickly on the frozen v1 protocol; Phase 2C produces the final v2 results.
+
+| Phase | Experiment | Runs | Answers |
+|---|---|---|---|
+| **2A-1** | Real-data learning curve: NAFNet on 50 / 100 / 200 real images (v1) | 2 new trainings | Is NAFNet data-hungry? (R1b) |
+| **2A-2** | Synthetic augmentation on v1: NAFNet, U-Net, GMM-200 on real + `syn-v1` ($p_\text{real}=0.5$) | 2 trainings + 1 prior | Does more data help, and which arm? |
+| **2A-3** | Controls: NAFNet on synthetic only; NAFNet on real + DIV2K | 2 trainings | Domain gap; synthetic vs real extra data |
+| **2B** | Fix and train M3 on v1 (USRNet, ISTA-Net, LISTA) | 3 trainings | The missing control arm |
+| **2C-1** | Build protocol v2 (kernels, quantized observations, manifests) | — | — |
+| **2C-2** | Train all arms on v2 $P_1$ pool with the data setting chosen in 2A | NAFNet, U-Net, GMM-200, USRNet (+ ladder) | Final three-arm comparison |
+| **2C-3** | Kernel-diversity ablation: NAFNet trained on v1 kernels, tested on v2 | 0 (reuse) | Does kernel variety reduce M1's mismatch gap? |
+| **2C-4** | Re-run H2 (texture), H3 (stability, incl. M3 as attacker and target), LPIPS on v2 | — | Hypotheses on v2 |
+
+**New hypotheses.**
+
+- **H4 (data).** More training images help the deep arms (M1, M3) in distribution more than the shallow M2 prior, which already saturates in the K-sweep. More data does **not** change kernel-mismatch robustness. *Falsified if* NAFNet's $P_2$ gain retention rises substantially with data alone.
+- **H5 (kernel diversity).** Training on more kernel families narrows M1's gap on unseen *parameters* ($P_2$-interp) but not on unseen *families* ($P_2$-extrap); the physics-aware arms stay ahead on unseen families and real kernels. *Falsified if* NAFNet trained on the v2 pool matches the physics-aware arms on $P_2$-extrap.
+
+**Pre-registered endpoints.**
+
+| ID | Endpoint | Test |
+|---|---|---|
+| E1 | ΔPSNR on v1 $P_1$ test, real + `syn-v1` vs real only, for NAFNet and for ADMM-EPLL (σ > 0) | Paired Wilcoxon over 200 images, Holm |
+| E2 | NAFNet gain retention (gain on $P_2$ / gain on $P_1$), v1 kernels vs v2 pool, on v2 test | Paired Wilcoxon |
+| E3 | Three-arm PSNR on v2 $P_1$, $P_2$-interp, $P_2$-extrap (σ > 0) | As in Phase 1 |
+
+### 12.5 Compute budget (single shared RTX 3090 Ti)
+
+| Item | Estimate |
+|---|---|
+| Synthetic generation (~2,600 images) + QC | 2–6 GPU-h |
+| 2A: 6 M1 trainings (≈2.8 h NAFNet, 0.5 h U-Net) + GMM priors + v1 re-evaluation | ≈20–25 GPU-h |
+| 2B: M3 fixes, training and v1 evaluation | ≈10–15 GPU-h |
+| 2C: v2 training (all arms) | ≈15–20 GPU-h |
+| 2C: v2 evaluation grid (~72 kernels × 5 σ; M2 solvers batched across cells, 100-image subset for FISTA-TV) | ≈40–60 GPU-h |
+| 2C: H3, LPIPS, texture on v2 | ≈10 GPU-h |
+| **Total** | **≈100–135 GPU-h**, about 1.5–2.5 weeks of wall-clock on a shared GPU |
+
+The v2 evaluation grid is the cost driver: without batching the M2 solvers it would be about 55 GPU-h for FISTA-TV alone. Batching the torch solvers across cells is therefore part of the implementation work.
+
+### 12.6 Implementation plan (no code written yet)
+
+| Area | Planned change |
+|---|---|
+| M3 fixes (first) | USRNet: pad to a multiple of 8 and return the prior's output; ISTA-Net/LISTA: identity-preserving skip connections; fix the 3 failing `assert_close` tests |
+| Synthetic data | `scripts/generate_synthetic.py` (prompt bank, seeds, manifest), `scripts/check_synthetic.py` (QC, leakage, statistics report), `src/deblur/data/synthetic.py` (loader, luminance, size normalisation) |
+| Protocol | `protocol/config.py`: `protocol_version`, training sources, $p_\text{real}$, synthetic dataset id + manifest hash, `quantize_observations` |
+| Training | `training/sampler.py`: multi-source mixture sampling and kernel-pool sampling; `scripts/train_m1.py`, `scripts/train_m3.py`, `scripts/train_gmm.py`: data-source options |
+| Kernels | `psf/library.py`: anisotropic Gaussian, random-trajectory motion, Airy, Moffat; Sun 2013 and Köhler 2012 loaders next to Levin; versioned `protocol_psf_sets(version)` |
+| Setup | `scripts/setup_datasets.py`: `sun2013`, `kohler2012`, `div2k` (opt-in), `--write-protocol --version v2` |
+| Evaluation | `scripts/evaluate.py`: `--protocol v2`; batched torch M2 solvers |
+| Tests | Mixture sampler, kernel generators (normalisation, support, seeds), leakage-check thresholds, protocol v1/v2 separation |
+
+### 12.7 Risks and mitigations
+
+| Risk | Mitigation |
+|---|---|
+| Synthetic images are smoother or "painterly" (domain gap) and bias the priors | Sharpness/statistics QC, $p_\text{real}=0.5$, synthetic-only diagnostic, DIV2K real-data control |
+| Generated images resemble BSDS test images (leakage) | Hash and embedding nearest-neighbour check against val and test; rejected images listed in the manifest |
+| Kernel pool makes M1 look better only because test kernels are "easier" | $P_1$ test and $P_2$ sets frozen before any v2 training; report the blurred-input baseline per set |
+| Real kernel datasets unavailable or licence-restricted | Levin kernels already supported; Sun/Köhler are optional additions to $P_2$-extrap |
+| v2 evaluation cost | Batched solvers, image subset for FISTA-TV, M1/M3 on the full grid |
+| Shared GPU | One job at a time, memory guard, low priority (as in Phase 1) |
+
+### 12.8 Timeline
+
+| Week | Work |
+|---|---|
+| 1 | M3 fixes and v1 training; synthetic pipeline; learning curve (2A-1) |
+| 2 | Generate and QC `syn-v1`; 2A-2 and 2A-3 runs; build v2 kernels and protocol |
+| 3 | Train all arms on v2 |
+| 4 | v2 evaluation, H2/H3/LPIPS reruns, final report and presentation |
+
+---
+
+## 13. References
 
 1. Rudin, Osher, Fatemi. *Nonlinear total variation based noise removal algorithms.* Physica D, 1992.
 2. Beck, Teboulle. *Fast gradient-based algorithms for constrained TV denoising and deblurring.* IEEE TIP, 2009.
