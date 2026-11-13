@@ -49,6 +49,7 @@ Only M1 and M3 train end-to-end networks; M2 learns a prior and runs a per-image
 
 - **Tier 1 (core):** BSDS500, synthetically degraded with a shared PSF library (Gaussian, procedural linear motion, defocus) and noise grid $\sigma \in \{0, 1, 5, 15, 25\}/255$, circular boundary handling.
 - **Phase 2 (planned):** training pool expanded with synthetic images (`syn-v1`) for every arm; protocol v2 with seven kernel families and 8-bit quantized observations.
+- **Phase 3 (proposed, after Phase 2):** K-NAFNet — the NAFNet backbone conditioned on the true kernel and σ, plus one closed-form FFT data-consistency step — evaluated against M1/M2/M3 (`vault/Proposed Approach.md` §12.9).
 - **Tier 2 (stretch):** GoPro (3214 real blurry/sharp pairs) for blind deblurring.
 - **Metrics:** PSNR, SSIM, LPIPS, data-consistency residual, kernel-mismatch robustness, and stability under small perturbations; paired Wilcoxon tests with multiplicity control.
 
@@ -234,7 +235,8 @@ python3 scripts/stability_test.py --data-root data \
 The script writes a CSV with clean/adversarial PSNR, the PSNR drop, SSIM, the
 data-consistency residual and the perturbation norm, plus a summary and a
 metadata JSON. Pass `--m3-checkpoint` to include M3. M2 is transfer-evaluated;
-a per-method white-box attack for M2 requires a gradient-enabled solver.
+a per-method white-box attack for M2 (Phase 2C-7) needs a gradient-enabled
+FISTA/EPLL solver and is not implemented yet.
 
 **Key options** (full table in `vault/Proposed Approach.md` §6.1):
 
@@ -297,7 +299,8 @@ the full specification is in `vault/Proposed Approach.md` §12.
   NAFNet, U-Net, the EPLL GMM prior and the M3 networks all train on the same
   mixture; validation and test stay real. A real-data learning curve
   (50 / 100 / 200 images), a synthetic-only run and a DIV2K real-data control
-  separate "more data" from synthetic-domain effects.
+  separate "more data" from synthetic-domain effects; train and validation
+  PSNR are logged per checkpoint, with validation reported on the σ > 0 cells.
 - **More kernel variety (protocol v2).** Seven families instead of three:
   isotropic and anisotropic Gaussian, linear motion and random-trajectory camera
   shake for training (≈400 kernels instead of 12); defocus, real recorded
@@ -306,19 +309,54 @@ the full specification is in `vault/Proposed Approach.md` §12.
   inverse crime.
 - **M3.** Fix USRNet (padding, output) and ISTA-Net/LISTA (skip connections),
   then train and evaluate all three.
+- **Coverage ablation (2C-5).** A NAFNet trained on the v2 dense/continuous pool
+  is evaluated on the **frozen v1 $P_2$ sets**. This is the direct test of
+  whether kernel coverage alone fixes the original mismatch; endpoint E2b.
+- **Prior and noise ablations on v2 (2C-6).** Re-run the GMM $K$-sweep and the
+  five per-σ specialists to check that both conclusions survive the wider
+  protocol.
+- **White-box stability (2C-7).** A gradient-enabled FISTA/EPLL and per-method
+  PGD, so H3 is no longer only a transfer attack on M1.
 - **New hypotheses.** H4: more data helps the deep arms in distribution but not
   under kernel mismatch. H5: more training kernel families narrow M1's gap on
   unseen parameters but not on unseen families.
+- **Go/no-go for synthetic data.** Generate `syn-v1` only if the real-data
+  learning curve and the DIV2K control show that more data helps; otherwise
+  spend the budget on kernel variety, M3 and Phase 3.
 - **Budget.** ≈100–135 GPU-hours over about four weeks. v1 results stay frozen
   as the mid-evaluation reference; every table states its protocol and data
   version.
 
-Remaining follow-ups beyond Phase 2: a per-method white-box H3 attack on M2 and
-real-blur (GoPro) evaluation.
-
 Install the learned-arm dependencies (PyTorch and LPIPS) with
 `pip install -r requirements.txt`; for a CPU-only PyTorch wheel, use the
 official index shown in that file.
+
+## Phase 3: proposed method (after Phase 2)
+
+Phase 2 is not the proposed method; it completes and stress-tests the
+comparison. The diagnosis points to a specific synthesis:
+
+- M1 (NAFNet) has a deep prior but is kernel-blind: it loses half its gain on
+  unseen motion angles.
+- M2 (ADMM-EPLL) has the right physics but a shallow prior: GMM capacity
+  saturates, and the M2 family's TV variant shows staircase/ringing on texture.
+- M3 (USRNet) is designed to have both but pays for unrolling, and is still
+  untrained.
+
+The proposal is **K-NAFNet**: the same 17.1 M NAFNet backbone, conditioned on
+the true kernel and σ through a small kernel encoder and FiLM modulation, plus
+**one closed-form FFT data-consistency step**. It is trained once on the v2 $P_1$
+pool like M1, and evaluated on the same $P_1$ / $P_2$-interp / $P_2$-extrap grid.
+The ablations separate what each ingredient buys: kernel concatenation vs FiLM,
+σ conditioning, one DC step vs 2–4 unrolled steps, kernel jitter on/off, and
+wrong-kernel / zero-condition tests that check whether the network actually uses
+the kernel. A decision gate uses the 2C-5 coverage ablation: if dense training
+already closes the gap, the cheaper fix is preferred; if not, K-NAFNet is the
+main proposal. Budget ≈8–12 GPU-hours. Full specification:
+`vault/Proposed Approach.md` §12.9.
+
+Still open after Phase 2: real-blur (GoPro) evaluation, a second seed for the
+headline M1 model, and shipping the raw per-cell CSVs.
 
 ## References
 

@@ -1,7 +1,7 @@
 ---
 title: Project Overview — Inverse Function Learning for Image Deblurring
 date: 2026-08-30
-updated: 2026-11-11
+updated: 2026-11-12
 tags:
   - project
   - deblurring
@@ -70,7 +70,17 @@ The primary M1 is **one model** trained on $P_1$ (4 Gaussian + 8 motion kernels)
 
 - A synthetic training-image pipeline (pretrained latent diffusion, ~2,000 images after quality and leakage checks), used identically by every learned component of every arm; real val/test unchanged.
 - Protocol v2: seven kernel families instead of three, including random-trajectory camera shake and real recorded kernels; 8-bit quantized observations.
-- Training and evaluating M3. Details in [[Proposed Approach]] §12.
+- Training and evaluating M3.
+- A frozen-v1 coverage ablation (2C-5): v2-trained NAFNet on the v1 $P_2$ sets, which tests whether kernel coverage alone fixes the original mismatch (endpoint E2b).
+- The GMM $K$-sweep and per-σ specialists on v2 (2C-6), and a white-box H3 attack on M2 (2C-7), so the prior-depth and stability conclusions are not tied to v1 or to a transfer attack.
+- Details in [[Proposed Approach]] §12.
+
+**Phase 3 (proposed method, after Phase 2)**
+
+- **K-NAFNet:** the M1 NAFNet backbone conditioned on the true kernel and σ through a kernel encoder and FiLM, plus one closed-form FFT data-consistency step.
+- Motivated directly by the diagnosis: M1's deep prior is kernel-blind, M2's physics is paired with a shallow prior, and M3 pays for unrolling.
+- Evaluated against M1/M2/M3 on the v2 grid, with ablations for kernel concatenation vs FiLM, σ conditioning, one DC step vs unrolled steps, kernel jitter, and wrong-kernel/zero-condition mechanism checks.
+- Decision gate: if 2C-5 shows that dense training already closes the gap, the cheaper fix is preferred; otherwise K-NAFNet is the main proposal. Specification in [[Proposed Approach]] §12.9.
 
 **Stretch**
 
@@ -90,7 +100,7 @@ The core comparison trains three artifacts (NAFNet, the EPLL prior, USRNet); the
 
 Tier 1 uses BSDS500 with the locked PSF sets: $P_1$ (4 Gaussian + 8 motion kernels) for training and in-distribution evaluation, $P_2$-interp (unseen parameters of the same families) and $P_2$-extrap (defocus disks, an unseen family) for kernel mismatch. Noise grid $\sigma \in \{0,1,5,15,25\}/255$, circular boundary handling, luminance images. Metrics: PSNR, SSIM, LPIPS, data-consistency residual, kernel-mismatch PSNR drop, and perturbation stability; paired Wilcoxon tests with multiplicity control. Checkpoint selection uses mean val PSNR over the fixed grid on a 10-image seeded subset of the sorted val list (IDs logged with the protocol); never per-condition selection. The locked protocol is in [[Proposed Approach]] §7.
 
-Phase 2 evaluates the same metrics on protocol v2, adds two hypotheses (H4: more data helps the deep arms in distribution but not under mismatch; H5: more training kernel families narrow M1's gap on unseen parameters but not on unseen families) and three pre-registered endpoints ([[Proposed Approach]] §12.4).
+Phase 2 evaluates the same metrics on protocol v2, adds two hypotheses (H4: more data helps the deep arms in distribution but not under mismatch; H5: more training kernel families narrow M1's gap on unseen parameters but not on unseen families) and four pre-registered endpoints (E1, E2, E2b, E3; [[Proposed Approach]] §12.4). 2C-5 tests the v2-trained NAFNet on the frozen v1 $P_2$ sets; 2C-7 replaces the transfer-only H3 with a per-method white-box attack.
 
 ## 7. Deliverables
 
@@ -99,6 +109,7 @@ Phase 2 evaluates the same metrics on protocol v2, adds two hypotheses (H4: more
 - Source code for every method in the comparison.
 - A written report describing the protocol, results, and the failure signature that motivates future work.
 - Phase 2: the versioned synthetic training set (`syn-v1`, with generation manifest and QC report) and the v2 kernel library, both frozen and released with the protocol.
+- Phase 3: one proposed method (K-NAFNet), its ablations, and a four-way comparison (M1, M2, M3, K-NAFNet) showing which ingredient — data coverage, kernel conditioning, unrolling, or data consistency — buys mismatch robustness.
 
 ## 8. Key references
 
@@ -123,4 +134,6 @@ Full bibliography: [[Proposed Approach]] §13.
 
 Active. **Mid-evaluation completed (November 2026).** M1 and M2 have a complete comparison under protocol v1, reported in `report/study_report.md`, including the H2 texture and H3 stability analyses and LPIPS. Key results: kernel mismatch is supported; H2 (texture) is not supported; H3 holds at σ≥5 but only in distribution at σ=1. A follow-up check showed that NAFNet does not memorise its training images but does overfit the training kernels (`report/nafnet_overfitting.pdf`).
 
-**Reviewer feedback and Phase 2.** The reviewer suggested that M1 may be data-hungry or overfit, and that three kernel families are too few. Phase 2 responds with a real-data learning curve, a synthetic training-image pipeline shared by all arms, and protocol v2 with seven kernel families; it also trains M3 (USRNet / ISTA-Net / LISTA, implemented but not yet trained) and fixes the σ = 0 inverse crime. The plan, compute budget (≈100–135 GPU-h) and four-week timeline are in [[Proposed Approach]] §12. **No Phase 2 code is written yet.**
+**Reviewer feedback and Phase 2.** The reviewer suggested that M1 may be data-hungry or overfit, and that three kernel families are too few. Phase 2 responds with a real-data learning curve, a synthetic training-image pipeline shared by all arms, and protocol v2 with seven kernel families; it also trains M3 (USRNet / ISTA-Net / LISTA, implemented but not yet trained) and fixes the σ = 0 inverse crime. 2C-5 adds the direct coverage ablation (v2-trained NAFNet on the frozen v1 $P_2$ sets), 2C-6 re-runs the prior/noise ablations on v2, and 2C-7 adds the white-box H3 attack on M2. The plan, compute budget (≈100–135 GPU-h) and four-week timeline are in [[Proposed Approach]] §12. **No Phase 2 code is written yet.**
+
+**Phase 3.** The method proposal is separate from Phase 2: **K-NAFNet**, a kernel- and σ-conditioned NAFNet with one FFT data-consistency step, evaluated against all three arms. It is specified with its ablations, decision gate and ≈8–12 GPU-h budget in [[Proposed Approach]] §12.9. Status: proposed, not implemented.

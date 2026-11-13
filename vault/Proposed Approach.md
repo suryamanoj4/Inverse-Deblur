@@ -1,7 +1,7 @@
 ---
 title: Proposed Approach — Three-Arm Comparison
 date: 2026-10-19
-updated: 2026-11-11
+updated: 2026-11-12
 tags:
   - project
   - deblurring
@@ -21,8 +21,8 @@ status: active
 > [!abstract] Summary
 > Three **established** methods, one controlled protocol: **M1** (data-only CNN), **M2** (physics-aware classical-ML solver), **M3** (physics-aware unrolled network, the control). No new architecture in the core study — the comparison itself is the contribution, and its failure signature motivates the follow-up method.
 
-> [!todo] Phase 2 (after the mid-evaluation)
-> In response to the reviewer, Phase 2 adds a synthetic training-image pipeline shared by all arms and a wider kernel library (protocol v2), and trains M3. Sections 0–11 describe the **v1** protocol used for the mid-evaluation results; the v2 changes are specified in **§12** and are not implemented yet.
+> [!todo] Phase 2 and Phase 3 (after the mid-evaluation)
+> In response to the reviewer, Phase 2 adds a synthetic training-image pipeline shared by all arms and a wider kernel library (protocol v2), and trains M3. Sections 0–11 describe the **v1** protocol used for the mid-evaluation results; the v2 changes are specified in **§12** and are not implemented yet. Phase 3, the method proposal (K-NAFNet), is **§12.9** and is also not implemented.
 
 Related: [[Project Overview]] · Proposal PDF: `proposal.pdf`
 
@@ -427,6 +427,8 @@ membership, sampling policy, checkpoint rule, and learned-arm hyperparameters.
 
 **Candidate follow-up (future work, not in this study's core):** a physics-aware network whose prior is a *mixture* — e.g. patch-GMM-routed experts, or a GSM-scale-driven spatially varying regularization strength — targeting the exact failure mode the three-arm comparison identifies.
 
+**Phase 3 proposal.** The primary follow-up is **K-NAFNet**: a NAFNet backbone conditioned on the known kernel and σ through a kernel encoder and FiLM, followed by one closed-form FFT data-consistency step. It is specified in §12.9, with the patch-GMM-routed and GSM-scale variants kept as alternatives. The comparison→method logic is deliberate: the ablation asks whether mismatch robustness comes from data coverage, kernel conditioning, unrolling, or data consistency.
+
 ---
 
 ## 9. Optional / stretch (not core)
@@ -434,8 +436,8 @@ membership, sampling policy, checkpoint rule, and learned-arm hyperparameters.
 | Method | Basis | Why optional |
 |---|---|---|
 | **Deep Image Prior** (Ulyanov et al., CVPR 2018) | Untrained network as implicit prior; early stopping | Per-image optimization, expensive; discussion only |
-| **GSM-scale spatially varying $\lambda$** | Local scale variable $\hat{z}$ estimates local SNR | Follow-up experiment; not needed for the core table |
-| **Patch-GMM-routed experts** | Mixture of experts gated by GMM responsibilities | Future-work proposal, motivated by the comparison |
+| **GSM-scale spatially varying $\lambda$** | Local scale variable $\hat{z}$ estimates local SNR | Follow-up experiment; not needed for the core table; alternative in §12.9.6 |
+| **Patch-GMM-routed experts** | Mixture of experts gated by GMM responsibilities | Future-work proposal, motivated by the comparison; alternative in §12.9.6 |
 
 ---
 
@@ -515,10 +517,13 @@ no-restoration baseline.
 
 ---
 
-## 12. Phase 2 plan (after the mid-evaluation)
+## 12. Phase 2 plan and Phase 3 proposal (after the mid-evaluation)
 
 > [!abstract] Summary
 > The mid-evaluation reviewer raised two points: **(R1)** M1 may be data-hungry or overfit, and **(R2)** three kernel families are too few. Phase 2 answers both without breaking the controlled comparison. **(1)** A synthetic training-image pipeline (pretrained latent diffusion), used identically by every learned component of every arm. **(2)** Protocol **v2** with a wider kernel library, including real recorded camera-shake kernels. Validation and test stay real BSDS500 images. The v1 results reported at the mid-evaluation are frozen and remain the reference point. **Status: planned; no Phase 2 code is written yet.**
+
+> [!important] Alignment with the project goal
+> Phase 2 is **not** the proposed method. Its job is to **finish and stress-test the three-arm comparison**: train M3, test data hunger, widen kernel coverage, and fix the σ = 0 protocol. The method proposal is **Phase 3 (§12.9)**, designed from the v1 diagnosis in §8 and the Phase 1/2 results.
 
 ### 12.0 Reviewer feedback and our response
 
@@ -565,6 +570,9 @@ no-restoration baseline.
 5. **Freeze.** SHA-256 per image, dataset name `syn-v1`, manifest stored with the protocol; never regenerated silently. Expected rejection rate 15–30%, so roughly 2,600 images are generated to keep 2,000.
 
 **Mixing.** The training sampler draws a real image with probability $p_\text{real}$ and a synthetic one otherwise. The primary setting is $p_\text{real}=0.5$; $p_\text{real}=1.0$ (real only, = v1) and $p_\text{real}=0$ (synthetic only, a domain-gap diagnostic) are ablations.
+
+> [!note] Go/no-go for the synthetic pipeline
+> Generate `syn-v1` **only if** 2A-1 shows NAFNet is still improving from 100 to 200 real images **and** the DIV2K control improves over real-only. If the real-data curve is flat, skip the synthetic pipeline and spend the budget on kernel variety, M3 and Phase 3. This keeps the plan aligned with the comparison→method goal instead of turning into a data-generation project.
 
 **How each arm uses it.**
 
@@ -617,11 +625,14 @@ v1 has three families: isotropic Gaussian, linear motion and defocus disks. v2 h
 | **2C-2** | Train all arms on v2 $P_1$ pool with the data setting chosen in 2A | NAFNet, U-Net, GMM-200, USRNet (+ ladder) | Final three-arm comparison |
 | **2C-3** | Kernel-diversity ablation: NAFNet trained on v1 kernels, tested on v2 | 0 (reuse) | Does kernel variety reduce M1's mismatch gap? |
 | **2C-4** | Re-run H2 (texture), H3 (stability, incl. M3 as attacker and target), LPIPS on v2 | — | Hypotheses on v2 |
+| **2C-5** | **Frozen-v1 coverage ablation:** NAFNet trained on the v2 dense/continuous $P_1$ pool, evaluated on the **frozen v1 $P_2$-interp and $P_2$-extrap** sets; compare v1 M1, v2 M1 and v2 M3 | 0 new trainings (reuse 2C-2) | Does kernel coverage alone fix the original mismatch? This is the direct test of the dense-angle idea (the earlier "M1-dense" arm). The 15° training grid and 7.5° interp offsets make it a held-out-angle test by construction. |
+| **2C-6** | Re-run the $K$-sweep and the per-σ specialists on v2 | 5 priors + 5 specialists | Do the prior-depth and σ ablations survive the wider protocol? |
+| **2C-7** | **White-box H3 on M2:** a gradient-enabled FISTA/EPLL (reduced iterations) and per-method PGD | 1 implementation + a small run | Is M2 also unstable to its *own* worst-case perturbation, or only to M1-crafted ones? |
 
 **New hypotheses.**
 
 - **H4 (data).** More training images help the deep arms (M1, M3) in distribution more than the shallow M2 prior, which already saturates in the K-sweep. More data does **not** change kernel-mismatch robustness. *Falsified if* NAFNet's $P_2$ gain retention rises substantially with data alone.
-- **H5 (kernel diversity).** Training on more kernel families narrows M1's gap on unseen *parameters* ($P_2$-interp) but not on unseen *families* ($P_2$-extrap); the physics-aware arms stay ahead on unseen families and real kernels. *Falsified if* NAFNet trained on the v2 pool matches the physics-aware arms on $P_2$-extrap.
+- **H5 (kernel diversity).** Training on more kernel families narrows M1's gap on unseen *parameters* ($P_2$-interp) but not on unseen *families* ($P_2$-extrap); the physics-aware arms stay ahead on unseen families and real kernels. *Falsified if* NAFNet trained on the v2 pool matches the physics-aware arms on $P_2$-extrap. The direct coverage check is 2C-5: a v2-trained NAFNet evaluated on the **frozen v1 $P_2$** sets.
 
 **Pre-registered endpoints.**
 
@@ -629,6 +640,7 @@ v1 has three families: isotropic Gaussian, linear motion and defocus disks. v2 h
 |---|---|---|
 | E1 | ΔPSNR on v1 $P_1$ test, real + `syn-v1` vs real only, for NAFNet and for ADMM-EPLL (σ > 0) | Paired Wilcoxon over 200 images, Holm |
 | E2 | NAFNet gain retention (gain on $P_2$ / gain on $P_1$), v1 kernels vs v2 pool, on v2 test | Paired Wilcoxon |
+| E2b | NAFNet gain retention on the **frozen v1 $P_2$** sets, v2-trained vs v1-trained | Paired Wilcoxon |
 | E3 | Three-arm PSNR on v2 $P_1$, $P_2$-interp, $P_2$-extrap (σ > 0) | As in Phase 1 |
 
 ### 12.5 Compute budget (single shared RTX 3090 Ti)
@@ -652,7 +664,7 @@ The v2 evaluation grid is the cost driver: without batching the M2 solvers it wo
 | M3 fixes (first) | USRNet: pad to a multiple of 8 and return the prior's output; ISTA-Net/LISTA: identity-preserving skip connections; fix the 3 failing `assert_close` tests |
 | Synthetic data | `scripts/generate_synthetic.py` (prompt bank, seeds, manifest), `scripts/check_synthetic.py` (QC, leakage, statistics report), `src/deblur/data/synthetic.py` (loader, luminance, size normalisation) |
 | Protocol | `protocol/config.py`: `protocol_version`, training sources, $p_\text{real}$, synthetic dataset id + manifest hash, `quantize_observations` |
-| Training | `training/sampler.py`: multi-source mixture sampling and kernel-pool sampling; `scripts/train_m1.py`, `scripts/train_m3.py`, `scripts/train_gmm.py`: data-source options |
+| Training | `training/sampler.py`: multi-source mixture sampling and kernel-pool sampling; `scripts/train_m1.py`, `scripts/train_m3.py`, `scripts/train_gmm.py`: data-source options. Log train and validation PSNR per checkpoint (train loss → PSNR) and report validation on σ > 0 cells, so the over/underfitting diagnosis is explicit |
 | Kernels | `psf/library.py`: anisotropic Gaussian, random-trajectory motion, Airy, Moffat; Sun 2013 and Köhler 2012 loaders next to Levin; versioned `protocol_psf_sets(version)` |
 | Setup | `scripts/setup_datasets.py`: `sun2013`, `kohler2012`, `div2k` (opt-in), `--write-protocol --version v2` |
 | Evaluation | `scripts/evaluate.py`: `--protocol v2`; batched torch M2 solvers |
@@ -678,6 +690,134 @@ The v2 evaluation grid is the cost driver: without batching the M2 solvers it wo
 | 3 | Train all arms on v2 |
 | 4 | v2 evaluation, H2/H3/LPIPS reruns, final report and presentation |
 
+### 12.9 Phase 3: from diagnosis to a proposed method (K-NAFNet)
+
+> [!abstract] Summary
+> Phase 2 finishes and stress-tests the three-arm comparison. Phase 3 uses that diagnosis to propose **one** better method. The diagnosis is specific: **M1 has a deep prior but is kernel-blind; M2 has the right physics but a shallow prior; M3 is designed to have both but pays for unrolling.** The proposal is **K-NAFNet**: the same NAFNet backbone, conditioned on the known kernel and noise level through a small kernel encoder and FiLM modulation, followed by one closed-form FFT data-consistency step. It is designed to keep M1's in-distribution accuracy, borrow M2's mismatch robustness, and cost one forward pass plus one FFT solve. **Status: proposed, not implemented; it starts only after Phase 2 produces the v2 results.**
+
+#### 12.9.1 What the diagnosis requires
+
+| Evidence (v1, frozen) | Design requirement | K-NAFNet element |
+|---|---|---|
+| NAFNet loses half its gain on unseen motion angles (+5.38 → +2.73 / +2.49 dB); unseen Gaussian widths cost only −0.7 dB | The model must be told *which* blur it is inverting, not infer it from a finite training set | Kernel encoder → FiLM conditioning |
+| Per-σ specialists add at most 0.25 dB | One model should cover σ, not five checkpoints | σ embedding |
+| NAFNet is unstable under small perturbations and can hallucinate | The output must remain consistent with the observation | One closed-form FFT data-consistency step |
+| GMM capacity saturates ($K=1\to4$ +1.8 dB, then +0.27, +0.11, +0.02) | The prior must be deeper than a patch GMM | NAFNet backbone (17.1 M) |
+| M2 costs 0.8–2.1 s/image and needs λ tuning | Amortise inference into one network pass | One forward pass + one FFT solve |
+| The M2 family's TV variant has staircase/ringing on texture; M1 is not better on high texture either | Replace the shallow prior without losing physics | Deep prior + DC, texture evaluated explicitly |
+| USRNet pays 8 unrolled iterations with a small prior | Separate what *conditioning* buys from what *unrolling* buys | One DC step primary; 4-step unrolled ablation |
+
+#### 12.9.2 Architecture
+
+**Backbone.** NAFNet exactly as M1: width 32, `enc_blocks=(1,1,1,28)`, `middle_blocks=1`, `dec_blocks=(1,1,1,1)`, 36 NAFBlocks, 17.1 M parameters. Keeping the backbone identical makes the comparison a test of *conditioning and data consistency*, not of capacity.
+
+**Kernel encoder.** The kernel is spatially uniform and small (≤31×31), so a global embedding is sufficient. A small CNN maps $k$ to $e_k\in\mathbb{R}^{64}$:
+
+$$
+k\in\mathbb{R}^{31\times31}\;\to\;\text{Conv}_{3\times3}(1\to16)\to\text{GELU}\to\text{Conv}_{3\times3}(16\to32)\to\text{GAP}\to\text{Linear}(32\to64).
+$$
+
+The encoder is trained jointly with the backbone; it has about 0.02 M parameters.
+
+**Noise encoder.** $\sigma$ spans 1–25/255, so encode $\log\sigma$ with Fourier features and a two-layer MLP to $e_\sigma\in\mathbb{R}^{16}$.
+
+**Conditioning.** Concatenate $c=[e_k;e_\sigma]\in\mathbb{R}^{80}$. Blocks at the same width share a FiLM layer (four scales), so the modulation is scale-specific but not block-specific:
+
+$$
+h_{\ell+1}=h_\ell+\bigl(1+\gamma_{s(\ell)}(c)\bigr)\,B_\ell(h_\ell)+\beta_{s(\ell)}(c),
+$$
+
+where $B_\ell$ is the NAFBlock residual branch, $s(\ell)$ is the scale of block $\ell$, and $\gamma_s,\beta_s\in\mathbb{R}^{C_s}$ come from one linear layer per scale. Initialise $\gamma_s=\beta_s=0$, so training starts from an unconditional NAFNet and learns how much conditioning to use. The FiLM layers add about 0.08 M parameters. Total ≈ **17.2 M**, essentially M1.
+
+**Output and data consistency.** The network predicts a residual, $\hat{x}_0=y+f_\theta(y,c)$. One closed-form FFT step then projects it onto the observation-consistent set:
+
+$$
+\hat{x}=\arg\min_x \tfrac12\lVert Ax-y\rVert_2^2+\frac{\rho}{2}\lVert x-\hat{x}_0\rVert_2^2
+\quad\Longleftrightarrow\quad
+\hat{X}=\frac{\overline{K}\,Y+\rho\,\hat{X}_0}{|K|^2+\rho},
+$$
+
+with $\rho>0$ selected on validation as a function of $\sigma$ (a single scalar per noise level, following the HQS data module used by USRNet). This is the same update as the $x$-step of ADMM/HQS, but applied once and amortised. $\rho\to\infty$ recovers the raw network output; $\rho\to0$ recovers the (unstable) inverse filter. The DC step is differentiable, so it can be trained through.
+
+**Unrolled variant (ablation).** Repeat $x_{t+1}=\mathrm{DC}\bigl(x_t+f_\theta(x_t,c)\bigr)$ for 2–4 steps, sharing weights. This tests whether the gain comes from conditioning or from iterating the physics; it is not the primary model because it multiplies inference cost.
+
+#### 12.9.3 Training protocol
+
+| Item | Setting |
+|---|---|
+| Data | Protocol v2 $P_1$ pool (families 1–4), same 200 real images as M1-v2, plus `syn-v1` **only if** Phase 2A adopts it |
+| Conditions | One model over all kernels and $\sigma>0$; no per-kernel or per-σ checkpoints |
+| Patches | 128×128 random crops, rot90 + flip, kernel and σ drawn per patch, as M1 |
+| Kernel jitter | With probability 0.1, perturb the sampled kernel (angle ±7.5°, length ±2 px, width ±0.3 px) so the encoder sees a continuous manifold rather than 400 discrete points |
+| Loss | L2 on the final $\hat{x}$ after DC, plus $0.1\times$L2 on $\hat{x}_0$ |
+| Optimiser | AdamW, lr $2\times10^{-4}$, wd $10^{-4}$, 1k warm-up + cosine, grad clip 1.0 |
+| Budget | 100k iterations, batch 16, ≈3–5 GPU-h on the RTX 3090 Ti |
+| Init | From scratch on the same v2 data as M1-v2; warm-starting from M1 is an ablation, not the default |
+| Selection | Same 10-image real val subset and 60-cell $P_1$ grid as M1, never per-condition |
+
+The kernel jitter and the wrong-kernel test in §12.9.5 are the safeguards against the failure mode this study already measured: a network that ignores the condition and memorises the training pool.
+
+#### 12.9.4 Hypotheses and falsification
+
+| ID | Claim | Target | Falsified if |
+|---|---|---|---|
+| **P1** | In distribution, conditioning costs nothing | Within 0.2 dB of M1-v2 on v2 $P_1$ | Loses >0.3 dB |
+| **P2** | Kernel conditioning closes the unseen-parameter gap | ≥2 dB above M1 and within 1 dB of M2 on $P_2$-interp | Still >2 dB behind M2 |
+| **P3** | Conditioning transfers to unseen *families* | Beats M1 on $P_2$-extrap (defocus, real, Airy/Moffat) | No gain over M1 |
+| **P4** | One DC step buys stability | Smaller H3 drop than M1, approaching M2 | H3 drop unchanged |
+| **P5** | A deep prior fixes M2's texture deficit without hallucination | Positive K-NAFNet−EPLL on high-texture images | Inherits M1's texture behaviour |
+| **P6** | The condition is actually used | Wrong kernel at test hurts more than the true kernel; zeroing $e_k$ hurts $P_2$ but not $P_1$ | No difference, i.e. the network ignored $c$ |
+
+P3 is the honest stress test. A kernel encoder sees shape, not a family label, so it *may* extrapolate; if it does not, the conclusion is that unseen families need explicit iteration (M3) or a broader prior, and that is a publishable negative result rather than a failure of the study.
+
+#### 12.9.5 Ablations and evaluation
+
+| ID | Variant | Question |
+|---|---|---|
+| A0 | M1-v2 (NAFNet, no $k$) | Baseline: deep prior without physics |
+| A1 | $k$ concatenated as a second input channel | Is a simple spatial concatenation enough? |
+| A2 | Kernel encoder + FiLM | Does global conditioning work? |
+| A3 | A2 + σ embedding | Does σ conditioning add anything to one model? |
+| A4 | A3 + one DC step | **Primary:** does explicit consistency help? |
+| A5 | A4 + 2–4 unrolled DC steps | Is iteration worth the cost? |
+| A6 | A4 without kernel jitter | Does jitter prevent pool memorisation? |
+| A7 | A4 with the wrong kernel at test | Is the condition used? |
+| A8 | A4 with $e_k=0$ at test | How much comes from conditioning vs the prior? |
+
+Evaluation uses the v2 grid and the same statistics as Phase 1: PSNR/SSIM, gain retention, LPIPS, data-consistency residual, H3, texture, inference time and parameter count, paired Wilcoxon over 200 images with Holm correction. The headline table has four rows: **M1-v2, M2, M3-v2, K-NAFNet**, on $P_1$, $P_2$-interp, $P_2$-extrap and real kernels.
+
+#### 12.9.6 Alternatives considered
+
+| Alternative | Idea | Why it is not primary | When it becomes primary |
+|---|---|---|---|
+| **PnP-EPLL + CNN denoiser** | Keep ADMM, replace the GMM Wiener step with a small CNN denoiser | Loses the classical-ML identity; essentially DPIR; still iterative | If K-NAFNet fails on unseen families and M3 is too expensive |
+| **Patch-GMM-routed experts** | GMM responsibilities route between expert heads or set a local λ | More complex; routing is noisy at high σ | If texture is the dominant failure and one deep prior over-smooths |
+| **GSM-scale spatially varying λ** | Local scale variable sets $\lambda(x)$ | A refinement, not a standalone method | As a plug-in on M2 or K-NAFNet |
+| **A properly trained USRNet** | More unrolled iterations, larger prior | Already M3; expensive per image | If unrolling beats conditioning in A5 |
+
+The patch-GMM-routed and GSM-scale ideas in §8–§9 remain the "mixture prior" branch. K-NAFNet is preferred as the primary proposal because it changes one axis at a time, reuses the M1 code and budget, and its ablations answer the study's central question directly: *is mismatch robustness bought by data coverage, kernel conditioning, unrolling, or data consistency?*
+
+#### 12.9.7 Decision gate, budget and risks
+
+**Decision gate.** Phase 3 starts after 2C-5.
+
+- If **2C-5** (v2-trained NAFNet evaluated on the frozen v1 $P_2$ sets) already closes the gap, kernel **coverage** is sufficient. K-NAFNet's remaining contribution is the DC step, σ conditioning and cheaper inference; report both and recommend the cheaper option.
+- If **2C-5** does not close the gap, K-NAFNet is the main proposal.
+- If **K-NAFNet also fails on $P_2$-extrap**, the study's conclusion becomes stronger: unseen *families* require explicit iterative physics (M3), not just conditioning. Report that as the answer, not as a failed method.
+
+**Budget.** ≈8–12 GPU-h total: 3–5 h for the primary training, 2–3 h for A1–A3 and A5–A6, 3–4 h for evaluation. One week to ten days. One seed for the headline; a second seed only if the P2 gain is below 0.5 dB.
+
+| Risk | Mitigation |
+|---|---|
+| FiLM is ignored and the model behaves like M1 | A7/A8 mechanism checks; kernel jitter during training |
+| Kernel encoder overfits the v2 training pool | Jitter, frozen v1 $P_2$ evaluation, real kernels in $P_2$-extrap |
+| The DC step hurts when $k$ is wrong (blind setting) | Non-blind only, as in M2/M3; blind is out of scope |
+| Gains appear only in distribution | Report as a negative result; the comparison still stands |
+| One seed, small differences | Second seed if the headline gain is <0.5 dB; paired tests over 200 images |
+| Scope creep into a new paper | One model, one table, one figure; no new dataset or architecture family |
+
+**Positioning.** This is not a claim of a new architecture family. SRMD conditions on a degradation map, USRNet unrolls HQS with a CNN prior, IRCNN/DPIR use a CNN denoiser inside a plug-and-play solver, and NAFNet is a strong modern prior. K-NAFNet is the **controlled synthesis** the three-arm comparison points to: a modern deep prior, an explicit kernel condition, and one data-consistency step, evaluated under the same protocol as the arms. Its scientific value is the ablation, not state-of-the-art PSNR: it tells us which ingredient buys mismatch robustness.
+
 ---
 
 ## 13. References
@@ -702,6 +842,7 @@ The v2 evaluation grid is the cost driver: without batching the M2 solvers it wo
 18. Scetbon, Elad, Milanfar. *Deep K-SVD denoising.* IEEE TIP, 2021.
 19. Wainwright, Simoncelli. *Scale mixtures of Gaussians and the statistics of natural images.* NIPS, 1999.
 20. Portilla, Strela, Wainwright, Simoncelli. *Image denoising using scale mixtures of Gaussians in the wavelet domain.* IEEE TIP, 2003.
+21. Zhang, Li, Zuo, Zhang. *Plug-and-play image restoration with deep denoiser prior (DPIR).* IEEE TPAMI, 2022.
 
 ---
 
