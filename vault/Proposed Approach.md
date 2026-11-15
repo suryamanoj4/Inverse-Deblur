@@ -1,7 +1,7 @@
 ---
 title: Proposed Approach — Three-Arm Comparison
 date: 2026-10-19
-updated: 2026-11-12
+updated: 2026-11-15
 tags:
   - project
   - deblurring
@@ -22,7 +22,7 @@ status: active
 > Three **established** methods, one controlled protocol: **M1** (data-only CNN), **M2** (physics-aware classical-ML solver), **M3** (physics-aware unrolled network, the control). No new architecture in the core study — the comparison itself is the contribution, and its failure signature motivates the follow-up method.
 
 > [!todo] Phase 2 and Phase 3 (after the mid-evaluation)
-> In response to the reviewer, Phase 2 adds a synthetic training-image pipeline shared by all arms and a wider kernel library (protocol v2), and trains M3. Sections 0–11 describe the **v1** protocol used for the mid-evaluation results; the v2 changes are specified in **§12** and are not implemented yet. Phase 3, the method proposal (K-NAFNet), is **§12.9** and is also not implemented.
+> In response to the reviewer, Phase 2 adds a synthetic training-image pipeline shared by all arms and a wider kernel library (protocol v2), and trains M3. Sections 0–11 describe the **v1** protocol used for the mid-evaluation results; the v2 changes are specified in **§12**; their code is implemented and the runs are pending ([[Phase 2 Run Checklist]]). Phase 3, the method proposal (K-NAFNet), is **§12.9** and is also not implemented.
 
 Related: [[Project Overview]] · Proposal PDF: `proposal.pdf`
 
@@ -413,7 +413,7 @@ membership, sampling policy, checkpoint rule, and learned-arm hyperparameters.
 | 10 | consolidated report (`report/study_report.md`, `report/generated/`) | ✅ M1/M2 + H2/H3/LPIPS results; M3 pending |
 | H3 | stability (`metrics/stability.py`, `scripts/stability_test.py`) | ✅ implemented + run (transfer, 10 images); report §7 |
 | Overfit check | `scripts/analyze_overfit.py`, `report/nafnet_overfitting.pdf` | ✅ run: no image memorisation; kernel-distribution overfitting |
-| Phase 2 | M3 fixes, synthetic pipeline, kernel library v2, mixture sampler, batched M2 solvers (§12.6) | 📝 planned, not implemented |
+| Phase 2 | M3 fixes, synthetic pipeline, kernel library v2, mixture sampler, batched and differentiable M2 solvers (§12.6) | ✅ implemented + tested; runs pending ([[Phase 2 Run Checklist]]) |
 
 ---
 
@@ -520,7 +520,7 @@ no-restoration baseline.
 ## 12. Phase 2 plan and Phase 3 proposal (after the mid-evaluation)
 
 > [!abstract] Summary
-> The mid-evaluation reviewer raised two points: **(R1)** M1 may be data-hungry or overfit, and **(R2)** three kernel families are too few. Phase 2 answers both without breaking the controlled comparison. **(1)** A synthetic training-image pipeline (pretrained latent diffusion), used identically by every learned component of every arm. **(2)** Protocol **v2** with a wider kernel library, including real recorded camera-shake kernels. Validation and test stay real BSDS500 images. The v1 results reported at the mid-evaluation are frozen and remain the reference point. **Status: planned; no Phase 2 code is written yet.**
+> The mid-evaluation reviewer raised two points: **(R1)** M1 may be data-hungry or overfit, and **(R2)** three kernel families are too few. Phase 2 answers both without breaking the controlled comparison. **(1)** A synthetic training-image pipeline (pretrained latent diffusion), used identically by every learned component of every arm. **(2)** Protocol **v2** with a wider kernel library, including real recorded camera-shake kernels. Validation and test stay real BSDS500 images. The v1 results reported at the mid-evaluation are frozen and remain the reference point. **Status: code implemented and tested (2026-11-15); runs pending, see [[Phase 2 Run Checklist]].**
 
 > [!important] Alignment with the project goal
 > Phase 2 is **not** the proposed method. Its job is to **finish and stress-test the three-arm comparison**: train M3, test data hunger, widen kernel coverage, and fix the σ = 0 protocol. The method proposal is **Phase 3 (§12.9)**, designed from the v1 diagnosis in §8 and the Phase 1/2 results.
@@ -653,22 +653,34 @@ v1 has three families: isotropic Gaussian, linear motion and defocus disks. v2 h
 | 2C: v2 training (all arms) | ≈15–20 GPU-h |
 | 2C: v2 evaluation grid (~72 kernels × 5 σ; M2 solvers batched across cells, 100-image subset for FISTA-TV) | ≈40–60 GPU-h |
 | 2C: H3, LPIPS, texture on v2 | ≈10 GPU-h |
-| **Total** | **≈100–135 GPU-h**, about 1.5–2.5 weeks of wall-clock on a shared GPU |
+| **Total** | **≈100–135 GPU-h** (planning estimate), about 1.5–2.5 weeks of wall-clock on a shared GPU. Re-estimated from measured speeds after implementation: **≈90 GPU-h without synthetic data, ≈105 with** ([[Phase 2 Run Checklist]]) |
 
 The v2 evaluation grid is the cost driver: without batching the M2 solvers it would be about 55 GPU-h for FISTA-TV alone. Batching the torch solvers across cells is therefore part of the implementation work.
 
-### 12.6 Implementation plan (no code written yet)
+### 12.6 Implementation (code complete, 2026-11-15; runs pending)
 
-| Area | Planned change |
+All Phase 2 code below is implemented, unit-tested (153 tests) and smoke-tested on the GPU. What remains is running it: see **[[Phase 2 Run Checklist]]** for every run, its command and its measured time.
+
+| Area | Implemented in |
 |---|---|
-| M3 fixes (first) | USRNet: pad to a multiple of 8 and return the prior's output; ISTA-Net/LISTA: identity-preserving skip connections; fix the 3 failing `assert_close` tests |
-| Synthetic data | `scripts/generate_synthetic.py` (prompt bank, seeds, manifest), `scripts/check_synthetic.py` (QC, leakage, statistics report), `src/deblur/data/synthetic.py` (loader, luminance, size normalisation) |
-| Protocol | `protocol/config.py`: `protocol_version`, training sources, $p_\text{real}$, synthetic dataset id + manifest hash, `quantize_observations` |
-| Training | `training/sampler.py`: multi-source mixture sampling and kernel-pool sampling; `scripts/train_m1.py`, `scripts/train_m3.py`, `scripts/train_gmm.py`: data-source options. Log train and validation PSNR per checkpoint (train loss → PSNR) and report validation on σ > 0 cells, so the over/underfitting diagnosis is explicit |
-| Kernels | `psf/library.py`: anisotropic Gaussian, random-trajectory motion, Airy, Moffat; Sun 2013 and Köhler 2012 loaders next to Levin; versioned `protocol_psf_sets(version)` |
-| Setup | `scripts/setup_datasets.py`: `sun2013`, `kohler2012`, `div2k` (opt-in), `--write-protocol --version v2` |
-| Evaluation | `scripts/evaluate.py`: `--protocol v2`; batched torch M2 solvers |
-| Tests | Mixture sampler, kernel generators (normalisation, support, seeds), leakage-check thresholds, protocol v1/v2 separation |
+| M3 fixes | `unrolled/usrnet.py`: pads to a multiple of 8 and returns the last prior output; `unrolled/ista_net.py`, `unrolled/lista.py`: residual on the gradient step with a zero-initialised last layer, so each phase starts as a plain gradient step; the 3 `assert_close` tests fixed. Smoke runs: USRNet 25.4 dB, ISTA-Net 25.8 dB after 400 iterations (previously a crash and 4.7–12.5 dB) |
+| Kernels | `psf/library.py`: `anisotropic_gaussian_kernel`, `trajectory_kernel` (Boracchi & Foi), `airy_kernel`, `moffat_kernel`, `fit_support` (31×31 cap), `load_kernel_dir` (Levin/Sun/Köhler), `protocol_psf_sets("v2")`. v1 is unchanged and pinned by a SHA-256 test |
+| Protocol | `protocol/config.py`: `protocol_version`, per-version defaults, `real_kernel_dirs`, `quantize_observations`, `psf_sets()`, kernel-set digest in the manifest; `protocol/observations.py`: 8-bit quantization |
+| Training data | `data/training_pool.py` (one pool builder and one set of options for `train_m1.py`, `train_m3.py`, `train_gmm.py`: `--train-images`, `--extra-images`, `--p-real`, `--require-manifest`); `data/synthetic.py` (BSDS-size normalisation, manifest-verified loading, nested subsets, QC primitives) |
+| Sampler / trainer | `training/sampler.py`: real/extra mixture, family-balanced kernels, quantized observations (v1 batches bit-identical); `training/trainer.py`: logs train PSNR and validation PSNR on σ > 0 |
+| Synthetic pipeline | `scripts/generate_synthetic.py` (336-prompt bank, fixed seeds, img2img from train only, ≤25%), `scripts/check_synthetic.py` (sharpness, entropy, duplicates, pHash/CLIP leakage vs val+test, statistics report, frozen manifest) |
+| Setup | `scripts/setup_datasets.py`: `sun2013`, `kohler2012`, `div2k`; `--write-protocol --version v2` writes the kernels as arrays with SHA-256 |
+| Evaluation | `scripts/evaluate.py`: `--protocol`, `--real-kernels`, batched torch M2 solvers (`--m2-batch`); `evaluation/grid.py`: batch API and quantization |
+| White-box H3 (2C-7) | `methods/classical/torch_backend.py`: differentiable `fista_tv_torch_diff` / `admm_epll_torch_diff`; `scripts/stability_test.py --attack-arm m2` with a reduced-iteration surrogate (20×10 FISTA-TV, 10 EPLL) |
+| Tests | `tests/test_phase2.py` (18 tests) and new M3 tests |
+
+**Decisions made during implementation** (all recorded in the protocol manifest):
+
+- **v2 training pool: 290 kernels**: 10 isotropic Gaussian, 120 anisotropic, 60 motion, 100 shake. Because the families are unequal in size, v2 samples kernels **family-balanced** (family first, then a kernel). `condition_sampling` records this; v1 stays `uniform_independent`.
+- **Shake intensity** is mapped to an irregularity of at most 0.03. This was calibrated visually against recorded kernels: higher values produce unrealistic scribbles.
+- **$P_1$ test** kernels are a seeded random draw of 6 per family from the pool (spread over angles and widths); **$P_2$-extrap** without downloads is defocus (4) + Airy (3) + Moffat (3), and real kernels are added with `--real-kernels` before v2 is frozen.
+- **FISTA-TV cost is set by the FFT size, not by batching or precision:** cuFFT is ≈2.5× slower at 481×321 than at 480×320; batching gives ≈1.2× and float32 nothing. The v2 budget therefore keeps FISTA-TV on a 100-image subset.
+- **2C-5 caveat:** the v2 Gaussian training grid contains σ_k = 1.4 and 1.8, two of the three Gaussians in the *v1* $P_2$-interp set; report or exclude them in the frozen-v1 coverage test.
 
 ### 12.7 Risks and mitigations
 

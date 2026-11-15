@@ -25,7 +25,7 @@ __pycache__/
 .pytest_cache/
 
 # Local datasets and generated protocol artifacts
-data/
+/data/
 artifacts/
 
 # Model checkpoints (trained priors)

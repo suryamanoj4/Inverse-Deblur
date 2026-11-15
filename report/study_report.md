@@ -680,7 +680,7 @@ The raw per-cell evaluation CSVs and the `sigma0_quantized` CSVs used by `script
 - **LPIPS:** all methods on the 50-image test subset (Section 8).
 - **σ=0:** excluded from headline averages; 8-bit check reported. Future runs should quantize observations or add a noise floor to the protocol.
 - **Overfitting check (after the mid-evaluation):** NAFNet scored on 20 training vs 20 test images under identical conditions shows no memorisation (gap −0.04 dB vs −0.08 dB for the EPLL control); `scripts/analyze_overfit.py`, `report/nafnet_overfitting.pdf`.
-- **Phase 2 (planned, not implemented):** real-data learning curve, `syn-v1`, protocol v2 with seven kernel families and 8-bit observations, M3 training, the 2C-5 coverage ablation, the 2C-6 $K$-sweep/σ ablations on v2, and the 2C-7 white-box H3 attack. Specification: `vault/Proposed Approach.md` §12.
+- **Phase 2 (code implemented and tested; runs pending, see `vault/Phase 2 Run Checklist.md`):** real-data learning curve, `syn-v1`, protocol v2 with seven kernel families and 8-bit observations, M3 training, the 2C-5 coverage ablation, the 2C-6 $K$-sweep/σ ablations on v2, and the 2C-7 white-box H3 attack. Specification: `vault/Proposed Approach.md` §12.
 - **Phase 3 (proposed, not implemented):** K-NAFNet, a kernel- and σ-conditioned NAFNet with one closed-form FFT data-consistency step, evaluated against M1/M2/M3. Specification: `vault/Proposed Approach.md` §12.9 and Section 12 below.
 
 ### Mid-evaluation feedback

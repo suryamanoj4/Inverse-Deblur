@@ -14,6 +14,10 @@ Examples:
     PYTHONPATH=src python3 scripts/train_m3.py --data-root data --model lista
     # resume an interrupted run
     PYTHONPATH=src python3 scripts/train_m3.py --data-root data --model usrnet --resume
+    # Phase 2: protocol v2, and the same training-data options as train_m1.py
+    PYTHONPATH=src python3 scripts/train_m3.py --data-root data --model usrnet --protocol v2
+    PYTHONPATH=src python3 scripts/train_m3.py --data-root data --model usrnet --protocol v2 \
+        --extra-images data/synthetic/syn-v1 --require-manifest --p-real 0.5
     # quick smoke test (deviates from the protocol; not a result)
     PYTHONPATH=src python3 scripts/train_m3.py --data-root data --model lista \
         --iterations 100 --val-interval 50 --val-subset-size 2
@@ -28,9 +32,9 @@ import numpy as np
 import torch
 
 from deblur.data import BSDS500, load_image
+from deblur.data.training_pool import add_pool_arguments, pool_from_args, pool_tag
 from deblur.methods.unrolled import build_model
 from deblur.protocol import ProtocolConfig, validation_subset
-from deblur.psf import protocol_psf_sets
 from deblur.training import (
     PatchSampler,
     Trainer,
@@ -64,6 +68,11 @@ def main() -> None:
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--no-amp", action="store_true", help="disable bfloat16 autocast on CUDA")
     parser.add_argument("--resume", action="store_true", help="continue from <out>/last.pt")
+    parser.add_argument("--protocol", default="v1", choices=["v1", "v2"],
+                        help="protocol version (v1 = mid-evaluation, frozen; v2 = Phase 2)")
+    parser.add_argument("--real-kernels", action="append", default=[], metavar="PREFIX=DIR",
+                        help="v2 only: add real recorded kernels from DIR to P2_extrap (repeatable)")
+    add_pool_arguments(parser)
     parser.add_argument("--init", default=None, help="initial weights (optional)")
     smoke = parser.add_argument_group("overrides (recorded as protocol deviations)")
     smoke.add_argument("--iterations", type=int, default=None)
@@ -73,13 +82,15 @@ def main() -> None:
     smoke.add_argument("--log-interval", type=int, default=None)
     args = parser.parse_args()
 
-    locked = ProtocolConfig(data_root=args.data_root)
+    real_kernel_dirs = tuple(tuple(item.split("=", 1)) for item in args.real_kernels)
+    base = {"data_root": args.data_root, "protocol_version": args.protocol, "real_kernel_dirs": real_kernel_dirs}
+    locked = ProtocolConfig(**base)
     deviations = {}
     config_overrides = {}
     if args.val_subset_size is not None and args.val_subset_size != locked.val_subset_size:
         config_overrides["val_subset_size"] = args.val_subset_size
         deviations["val_subset_size"] = args.val_subset_size
-    config = ProtocolConfig(data_root=args.data_root, **config_overrides)
+    config = ProtocolConfig(**base, **config_overrides)
 
     amp = args.device.startswith("cuda") and not args.no_amp
     reference = TrainSettings.from_protocol(config, arm="m3", amp=amp)
@@ -95,38 +106,48 @@ def main() -> None:
         batch_size = args.batch_size
         deviations["batch_size"] = batch_size
 
-    out_dir = Path(args.out) if args.out else ROOT / "checkpoints" / "m3" / args.model
-    if (out_dir / "last.pt").exists() and not args.resume:
-        raise SystemExit(f"{out_dir} already has a run; pass --resume or choose another --out")
 
     np.random.seed(config.seed)
     torch.manual_seed(config.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(config.seed)
 
-    train_set = BSDS500(config.data_root, split="train", luminance=config.luminance)
+    pool = pool_from_args(args, config.data_root, config.luminance, config.seed)
     val_set = BSDS500(config.data_root, split="val", luminance=config.luminance)
-    image_root = train_set.image_root
+    image_root = val_set.image_root
     val_paths = validation_subset(val_set.paths, size=config.val_subset_size, seed=config.val_subset_seed)
     val_images = [
         (p.relative_to(image_root).as_posix(), load_image(p, luminance=config.luminance))
         for p in val_paths
     ]
-    train_psfs = protocol_psf_sets()[config.train_psf_set]
+    psf_sets = config.psf_sets()
+    train_psfs = psf_sets[config.train_psf_set]
+    val_psfs = psf_sets[config.val_psf_set]
+    version_dir = ROOT / "checkpoints" if config.protocol_version == "v1" else ROOT / "checkpoints" / config.protocol_version
+    out_dir = Path(args.out) if args.out else version_dir / "m3" / f"{args.model}{pool_tag(pool)}"
+    if (out_dir / "last.pt").exists() and not args.resume:
+        raise SystemExit(f"{out_dir} already has a run; pass --resume or choose another --out")
+    extra = f" + {len(pool.extra_images)} {pool.extra.name} (p_real {pool.p_real:g})" if pool.extra else ""
     print(
-        f"M3 {args.model}: {len(train_set)} train images, {len(train_psfs)} PSFs x "
-        f"{len(config.noise_levels)} noise levels, val on {len(val_images)} images "
-        f"({len(train_psfs) * len(config.noise_levels)} cells), device {args.device}, amp {amp}"
+        f"M3 {args.model} [{config.protocol_version}]: {len(pool.real_ids)} real train images{extra}, "
+        f"{len(train_psfs)} training PSFs ({config.condition_sampling}) x {len(config.noise_levels)} "
+        f"noise levels, val on {len(val_images)} images x {len(val_psfs)} PSFs, device {args.device}, amp {amp}"
     )
 
     sampler = PatchSampler(
-        images=list(train_set),
+        images=pool.real_images,
         kernels=[psf.kernel for psf in train_psfs],
         noise_levels=config.noise_levels,
         patch_size=config.patch_size,
         batch_size=batch_size,
         device=args.device,
         seed=config.seed,
+        extra_images=pool.extra_images,
+        p_real=pool.p_real,
+        kernel_groups=(
+            [psf.kind for psf in train_psfs] if config.condition_sampling == "family_balanced" else None
+        ),
+        quantize=config.quantize_observations,
     )
     model = build_model(args.model).to(args.device)
     if args.init:
@@ -139,7 +160,8 @@ def main() -> None:
 
     def validate(_model):
         rows = evaluate_grid(
-            restore_fn, val_images, train_psfs, config.noise_levels, seed=config.seed
+            restore_fn, val_images, val_psfs, config.noise_levels, seed=config.seed,
+            quantize=config.quantize_observations,
         )
         return mean_psnr(rows), rows
 
@@ -155,7 +177,12 @@ def main() -> None:
         "parameters": n_params,
         "regime": "single_model",
         "noise_levels_255": config.noise_levels_over_255,
+        "protocol_version": config.protocol_version,
         "train_psf_set": config.train_psf_set,
+        "val_psf_set": config.val_psf_set,
+        "condition_sampling": config.condition_sampling,
+        "quantize_observations": config.quantize_observations,
+        "training_data": pool.describe(),
         "batch_size": batch_size,
         "precision": {"train": "bf16 autocast" if amp else "fp32", "validation": "fp32"},
         "init": args.init,

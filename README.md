@@ -234,9 +234,9 @@ python3 scripts/stability_test.py --data-root data \
 
 The script writes a CSV with clean/adversarial PSNR, the PSNR drop, SSIM, the
 data-consistency residual and the perturbation norm, plus a summary and a
-metadata JSON. Pass `--m3-checkpoint` to include M3. M2 is transfer-evaluated;
-a per-method white-box attack for M2 (Phase 2C-7) needs a gradient-enabled
-FISTA/EPLL solver and is not implemented yet.
+metadata JSON. Pass `--m3-checkpoint` to include M3. M2 is transfer-evaluated
+by default; `--attack-arm m2` runs the white-box attack on M2 itself (Phase 2C-7)
+through a differentiable, reduced-iteration FISTA-TV or ADMM-EPLL surrogate.
 
 **Key options** (full table in `vault/Proposed Approach.md` §6.1):
 
@@ -290,8 +290,18 @@ vs −0.08 dB for the EPLL control) but does overfit the training kernels.
 ## Phase 2 plan (after the mid-evaluation)
 
 The mid-evaluation reviewer suggested that M1 may be data-hungry or overfit, and
-that three kernel families are too few. Phase 2 is **planned, not implemented**;
-the full specification is in `vault/Proposed Approach.md` §12.
+that three kernel families are too few. The Phase 2 **code is implemented and
+tested; the runs are pending.** The specification is in `vault/Proposed Approach.md`
+§12, and every remaining run, with its command and measured time, is in
+`vault/Phase 2 Run Checklist.md` (≈90 GPU-h without synthetic data, ≈105 with).
+
+New options, shared by `train_m1.py`, `train_m3.py` and `train_gmm.py`:
+`--protocol v2`, `--train-images N` (nested real subset), `--extra-images DIR`
+with `--p-real P` and `--require-manifest`. `evaluate.py` and
+`stability_test.py` take `--protocol v2`; `stability_test.py --attack-arm m2`
+attacks M2 directly. `generate_synthetic.py` and `check_synthetic.py` build and
+freeze a synthetic set; `setup_datasets.py --write-protocol --version v2`
+freezes the v2 kernels.
 
 - **More training data, identical for every arm.** A synthetic-image pipeline
   (pretrained latent diffusion, ~2,000 images after sharpness, statistics and
@@ -323,7 +333,7 @@ the full specification is in `vault/Proposed Approach.md` §12.
 - **Go/no-go for synthetic data.** Generate `syn-v1` only if the real-data
   learning curve and the DIV2K control show that more data helps; otherwise
   spend the budget on kernel variety, M3 and Phase 3.
-- **Budget.** ≈100–135 GPU-hours over about four weeks. v1 results stay frozen
+- **Budget.** ≈90 GPU-hours without synthetic data, ≈105 with (measured speeds; see the run checklist). v1 results stay frozen
   as the mid-evaluation reference; every table states its protocol and data
   version.
 

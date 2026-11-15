@@ -1,8 +1,11 @@
-"""PSF library: Gaussian, motion (Levin) and defocus kernels.
+"""PSF library and the versioned protocol kernel sets.
 
-All kernels are returned normalised to unit mass. Motion kernels can be loaded
-from the official Levin et al. (2009) set, or generated procedurally as a
-fallback so the pipeline is runnable before the files are downloaded.
+All kernels are returned normalised to unit mass. Protocol v1 (the
+mid-evaluation protocol, frozen) uses isotropic Gaussian, linear motion and
+defocus kernels. Protocol v2 adds anisotropic Gaussian, random-trajectory
+camera shake (Boracchi & Foi, 2012), Airy and Moffat profiles, and optional
+real recorded kernels (Levin et al., 2009; Sun et al., 2013; Kohler et al.,
+2012) loaded from disk.
 """
 
 from __future__ import annotations
@@ -98,6 +101,142 @@ def motion_kernel(
     return _normalise(blocks)
 
 
+def anisotropic_gaussian_kernel(
+    sigma_x: float,
+    sigma_y: float,
+    angle_deg: float,
+    size: int | None = None,
+) -> np.ndarray:
+    """Rotated anisotropic Gaussian PSF (``sigma_x`` along ``angle_deg``)."""
+    if sigma_x <= 0 or sigma_y <= 0:
+        raise ValueError("sigma_x and sigma_y must be positive")
+    if size is None:
+        size = 2 * int(np.ceil(3.0 * max(sigma_x, sigma_y))) + 1
+    if size % 2 == 0:
+        size += 1
+    ax = np.arange(size, dtype=np.float64) - (size - 1) / 2.0
+    xx, yy = np.meshgrid(ax, ax, indexing="xy")
+    theta = np.deg2rad(angle_deg)
+    u = xx * np.cos(theta) + yy * np.sin(theta)
+    v = -xx * np.sin(theta) + yy * np.cos(theta)
+    return _normalise(np.exp(-0.5 * ((u / sigma_x) ** 2 + (v / sigma_y) ** 2)))
+
+
+SHAKE_MAX_ANXIETY = 0.03
+
+
+def trajectory_kernel(
+    extent: float,
+    intensity: float,
+    seed: int,
+    size: int | None = None,
+    steps: int = 2000,
+) -> np.ndarray:
+    """Random-trajectory camera-shake PSF (Boracchi & Foi, 2012).
+
+    A sensor trajectory is simulated as a random walk with inertia, a
+    centripetal pull, Gaussian jitter and occasional abrupt shakes. Its
+    ``intensity`` in (0, 1] scales the irregularity ("anxiety") linearly up to
+    ``SHAKE_MAX_ANXIETY``: low values give nearly straight strokes, 1 gives
+    curved, kinked paths like recorded hand shake (calibrated visually against
+    the Levin kernels; larger anxiety produces unrealistic scribbles). The path is scaled so its largest extent is ``extent`` pixels and
+    rasterised with bilinear splatting over the exposure. ``seed`` fixes the
+    trajectory, so a kernel is reproducible from its parameters.
+    """
+    if extent <= 0:
+        raise ValueError("extent must be positive")
+    if not 0.0 < intensity <= 1.0:
+        raise ValueError("intensity must be in (0, 1]")
+    anxiety = SHAKE_MAX_ANXIETY * intensity
+    rng = np.random.default_rng(seed)
+    centripetal = 0.7 * rng.random()
+    prob_big_shake = 0.2 * rng.random()
+    gaussian_shake = 10.0 * rng.random()
+    direction = np.exp(1j * 2.0 * np.pi * rng.random())
+    unit = 1.0 / (steps - 1)
+    velocity = direction * anxiety
+    path = np.zeros(steps, dtype=np.complex128)
+    for t in range(steps - 1):
+        shake = 0.0
+        if rng.random() < prob_big_shake * anxiety:
+            shake = 2.0 * velocity * np.exp(1j * (np.pi + rng.random() - 0.5))
+        jitter = gaussian_shake * complex(rng.standard_normal(), rng.standard_normal())
+        velocity = velocity + shake + anxiety * (jitter - centripetal * path[t]) * unit
+        velocity = velocity / abs(velocity) * unit
+        path[t + 1] = path[t] + velocity
+
+    span = max(np.ptp(path.real), np.ptp(path.imag))
+    path = (path - complex(path.real.mean(), path.imag.mean())) * (extent / max(span, 1e-12))
+    if size is None:
+        size = 2 * int(np.ceil(extent / 2.0)) + 3
+    if size % 2 == 0:
+        size += 1
+    centre = (size - 1) / 2.0
+    xs, ys = path.real + centre, path.imag + centre
+    x0, y0 = np.floor(xs).astype(int), np.floor(ys).astype(int)
+    fx, fy = xs - x0, ys - y0
+    kernel = np.zeros((size, size))
+    for dx, dy, w in (
+        (0, 0, (1 - fx) * (1 - fy)),
+        (1, 0, fx * (1 - fy)),
+        (0, 1, (1 - fx) * fy),
+        (1, 1, fx * fy),
+    ):
+        np.add.at(kernel, (np.clip(y0 + dy, 0, size - 1), np.clip(x0 + dx, 0, size - 1)), w)
+    return _normalise(kernel)
+
+
+def airy_kernel(first_zero: float, size: int | None = None, supersample: int = 8) -> np.ndarray:
+    """Diffraction-limited Airy pattern whose first dark ring has radius ``first_zero``."""
+    from scipy.special import j1
+
+    if first_zero <= 0:
+        raise ValueError("first_zero must be positive")
+    if size is None:
+        size = 2 * int(np.ceil(3.0 * first_zero)) + 1
+    if size % 2 == 0:
+        size += 1
+    n = size * supersample
+    coords = (np.arange(n, dtype=np.float64) + 0.5) / supersample - size / 2.0
+    xx, yy = np.meshgrid(coords, coords, indexing="xy")
+    r = np.hypot(xx, yy) * (3.8317059702 / first_zero)  # first zero of J1
+    with np.errstate(invalid="ignore", divide="ignore"):
+        intensity = np.where(r > 1e-12, (2.0 * j1(r) / r) ** 2, 1.0)
+    blocks = intensity.reshape(size, supersample, size, supersample).mean(axis=(1, 3))
+    return _normalise(blocks)
+
+
+def moffat_kernel(alpha: float, beta: float, size: int | None = None) -> np.ndarray:
+    """Moffat profile ``(1 + (r/alpha)^2)^-beta``: heavy tails, as in atmospheric blur."""
+    if alpha <= 0 or beta <= 1:
+        raise ValueError("alpha must be positive and beta > 1")
+    if size is None:
+        # radius where the profile falls below 1% of its peak
+        size = 2 * int(np.ceil(alpha * np.sqrt(100.0 ** (1.0 / beta) - 1.0))) + 1
+    if size % 2 == 0:
+        size += 1
+    ax = np.arange(size, dtype=np.float64) - (size - 1) / 2.0
+    xx, yy = np.meshgrid(ax, ax, indexing="xy")
+    return _normalise((1.0 + (xx**2 + yy**2) / alpha**2) ** (-beta))
+
+
+def fit_support(kernel: np.ndarray, max_size: int, threshold: float = 1e-3) -> np.ndarray:
+    """Crop ``kernel`` to its centred support and cap it at ``max_size`` x ``max_size``.
+
+    The crop is symmetric about the kernel centre so the PSF origin is kept.
+    Mass outside the cap is dropped and the result renormalised.
+    """
+    kernel = _normalise(kernel)
+    rows, cols = np.nonzero(kernel >= threshold * kernel.max())
+    h, w = kernel.shape
+    cy, cx = h // 2, w // 2
+    half_h = min(max(abs(rows - cy).max(), 1), (max_size - 1) // 2)
+    half_w = min(max(abs(cols - cx).max(), 1), (max_size - 1) // 2)
+    half = max(half_h, half_w)
+    top, left = max(cy - half, 0), max(cx - half, 0)
+    return _normalise(kernel[top : cy + half + 1, left : cx + half + 1])
+
+
 def default_motion_kernels(
     lengths: tuple[float, ...] = (9.0, 15.0),
     angles: tuple[float, ...] = (0.0, 45.0, 90.0, 135.0),
@@ -139,6 +278,33 @@ def _load_kernel_file(path: Path) -> np.ndarray:
         return np.asarray(im.convert("F"), dtype=np.float64)
 
 
+def load_kernel_dir(
+    directory: str | Path,
+    kind: str = "real",
+    prefix: str = "",
+    max_size: int | None = None,
+) -> list[PSF]:
+    """Load every kernel file in ``directory`` (sorted by name).
+
+    Accepts ``.npy``, ``.mat`` and common image formats. With ``max_size``,
+    each kernel is cropped to its support and capped (see :func:`fit_support`).
+    """
+    directory = Path(directory)
+    if not directory.is_dir():
+        raise FileNotFoundError(f"kernel directory not found: {directory}")
+    suffixes = {".npy", ".mat", ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+    paths = sorted(p for p in directory.iterdir() if p.suffix.lower() in suffixes)
+    if not paths:
+        raise FileNotFoundError(f"no kernel files found in {directory}")
+    psfs = []
+    for path in paths:
+        kernel = _normalise(_load_kernel_file(path))
+        if max_size is not None:
+            kernel = fit_support(kernel, max_size)
+        psfs.append(PSF(name=f"{prefix}{path.stem}", kernel=kernel, kind=kind))
+    return psfs
+
+
 def load_levin_kernels(directory: str | Path) -> list[PSF]:
     """Load the official Levin et al. motion kernels from ``directory``.
 
@@ -158,8 +324,14 @@ def load_levin_kernels(directory: str | Path) -> list[PSF]:
     ]
 
 
+PROTOCOL_VERSIONS = ("v1", "v2")
+V2_MAX_KERNEL_SIZE = 31
+
+
 def protocol_psf_sets(
+    version: str = "v1",
     *,
+    real_kernel_dirs: tuple[tuple[str, str], ...] = (),
     train_gaussian_sigmas: tuple[float, ...] = (0.7, 1.2, 1.6, 2.0),
     interp_gaussian_sigmas: tuple[float, ...] = (0.9, 1.4, 1.8),
     train_motion_lengths: tuple[float, ...] = (9.0, 15.0),
@@ -179,7 +351,15 @@ def protocol_psf_sets(
     The three sets are disjoint by construction (different names and
     parameters). P2-interp tests interpolation within seen families;
     P2-extrap tests extrapolation to an unseen family.
+
+    ``version="v2"`` returns the expanded protocol instead (see
+    :func:`protocol_v2_psf_sets`); the keyword parameters apply to v1 only and
+    ``real_kernel_dirs`` to v2 only. v1 is frozen: its sets never change.
     """
+    if version == "v2":
+        return protocol_v2_psf_sets(real_kernel_dirs)
+    if version != "v1":
+        raise ValueError(f"unknown protocol version {version!r}; choose from {PROTOCOL_VERSIONS}")
     p1: list[PSF] = [
         PSF(name=f"gaussian_sigma{sigma:g}", kernel=gaussian_kernel(sigma), kind="gaussian")
         for sigma in train_gaussian_sigmas
@@ -217,6 +397,112 @@ def protocol_psf_sets(
     names = [psf.name for kernels in sets.values() for psf in kernels]
     if len(names) != len(set(names)):
         raise ValueError("PSF protocol sets contain duplicate names")
+    return sets
+
+
+def _pick(items: list[PSF], count: int, seed: int) -> list[PSF]:
+    """``count`` items drawn without replacement with a fixed seed, in pool order."""
+    index = np.sort(np.random.default_rng(seed).choice(len(items), size=count, replace=False))
+    return [items[i] for i in index]
+
+
+def _v2_psf(name: str, kernel: np.ndarray, kind: str) -> PSF:
+    return PSF(name=name, kernel=fit_support(kernel, V2_MAX_KERNEL_SIZE), kind=kind)
+
+
+def _v2_family_pools() -> dict[str, list[PSF]]:
+    """Protocol v2 training pool, by family (training grids only)."""
+    gaussian = [
+        _v2_psf(f"gaussian_sigma{s:g}", gaussian_kernel(s), "gaussian")
+        for s in np.round(np.arange(0.6, 2.41, 0.2), 1)
+    ]
+    widths = (0.6, 1.2, 1.8, 2.4, 3.0)
+    aniso = [
+        _v2_psf(f"aniso_sx{sx:g}_sy{sy:g}_a{a:g}", anisotropic_gaussian_kernel(sx, sy, a), "aniso_gaussian")
+        for sx in widths
+        for sy in widths
+        if sx > sy
+        for a in range(0, 180, 15)
+    ]
+    motion = [
+        _v2_psf(f"motion_l{l:g}_a{a:g}", motion_kernel(l, a, thickness=1.5), "motion")
+        for l in (5, 9, 13, 17, 21)
+        for a in range(0, 180, 15)
+    ]
+    shake = [
+        _v2_psf(
+            f"shake_i{i:g}_s{seed}",
+            trajectory_kernel(_shake_extent(seed), i, seed),
+            "shake",
+        )
+        for i in (0.2, 0.4, 0.6, 0.8, 1.0)
+        for seed in range(20)
+    ]
+    return {"gaussian": gaussian, "aniso_gaussian": aniso, "motion": motion, "shake": shake}
+
+
+def _shake_extent(seed: int) -> float:
+    """Trajectory extent in pixels, 9-25, fixed by the seed."""
+    return 9.0 + 16.0 * np.random.default_rng(10_000 + seed).random()
+
+
+def protocol_v2_psf_sets(real_kernel_dirs: tuple[tuple[str, str], ...] = ()) -> dict[str, list[PSF]]:
+    """Protocol v2 kernel sets (expanded families; see the spec, section 12.3).
+
+    - ``P1_pool`` (training, about 290 kernels): isotropic Gaussian (0.2 grid in
+      [0.6, 2.4]), anisotropic Gaussian (widths {0.6,...,3.0}, 15-degree
+      angles), linear motion (lengths {5,9,13,17,21}, 15-degree angles) and
+      random-trajectory shake (intensities {0.2,...,1.0}, seeds 0-19).
+    - ``P1`` (in-distribution test, 24): 6 kernels per family from the pool.
+    - ``P2_interp`` (24): the same families between the training grid points
+      (7.5-degree angle offsets, intermediate widths/lengths/intensities,
+      held-out trajectory seeds).
+    - ``P2_extrap``: unseen families: defocus disks, Airy, Moffat and any real
+      recorded kernels found in ``real_kernel_dirs`` (``(prefix, directory)``
+      pairs, e.g. ``(("levin", "data/levin"),)``).
+
+    Every kernel is cropped to its support and capped at 31 x 31.
+    """
+    pools = _v2_family_pools()
+    p1_pool = [psf for family in pools.values() for psf in family]
+    p1 = [psf for i, family in enumerate(pools.values()) for psf in _pick(family, 6, seed=i)]
+
+    interp = [
+        _v2_psf(f"gaussian_sigma{s:g}", gaussian_kernel(s), "gaussian")
+        for s in (0.7, 1.1, 1.3, 1.7, 2.1, 2.3)
+    ]
+    interp += [
+        _v2_psf(f"aniso_sx{sx:g}_sy{sy:g}_a{a:g}", anisotropic_gaussian_kernel(sx, sy, a), "aniso_gaussian")
+        for sx, sy, a in ((1.5, 0.9, 7.5), (2.1, 0.9, 52.5), (2.7, 1.5, 97.5), (2.1, 1.5, 142.5),
+                          (2.7, 0.9, 22.5), (1.5, 0.9, 112.5))
+    ]
+    interp += [
+        _v2_psf(f"motion_l{l:g}_a{a:g}", motion_kernel(l, a, thickness=1.5), "motion")
+        for l, a in ((7, 7.5), (11, 37.5), (15, 67.5), (19, 97.5), (11, 127.5), (15, 157.5))
+    ]
+    interp += [
+        _v2_psf(f"shake_i{i:g}_s{seed}", trajectory_kernel(_shake_extent(seed), i, seed), "shake")
+        for i, seed in ((0.3, 100), (0.5, 101), (0.7, 102), (0.9, 103), (0.5, 104), (0.7, 105))
+    ]
+
+    extrap = [_v2_psf(f"defocus_r{r:g}", disk_kernel(r), "defocus") for r in (3, 5, 7, 9)]
+    extrap += [_v2_psf(f"airy_r{r:g}", airy_kernel(r), "airy") for r in (2, 3, 4)]
+    extrap += [
+        _v2_psf(f"moffat_a{a:g}_b{b:g}", moffat_kernel(a, b), "moffat")
+        for a, b in ((1.5, 2.5), (2.5, 3.0), (3.5, 4.0))
+    ]
+    for prefix, directory in real_kernel_dirs:
+        extrap += load_kernel_dir(directory, kind="real", prefix=f"{prefix}_", max_size=V2_MAX_KERNEL_SIZE)
+
+    sets = {"P1_pool": p1_pool, "P1": p1, "P2_interp": interp, "P2_extrap": extrap}
+    pool_names = {psf.name for psf in p1_pool}
+    if len(pool_names) != len(p1_pool):
+        raise ValueError("v2 training pool contains duplicate names")
+    if not {psf.name for psf in p1} <= pool_names:
+        raise ValueError("v2 P1 test kernels must come from the training pool")
+    held_out = [psf.name for psf in interp + extrap]
+    if len(held_out) != len(set(held_out)) or set(held_out) & pool_names:
+        raise ValueError("v2 held-out kernels overlap the training pool or each other")
     return sets
 
 

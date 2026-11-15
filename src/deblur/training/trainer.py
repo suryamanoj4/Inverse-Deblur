@@ -7,6 +7,11 @@ validation every ``val_interval`` iterations, and early stopping after
 ``early_stop_patience`` validations without improvement. The checkpoint kept as
 ``best.pt`` is the one with the highest validation score (``mean_val_psnr``);
 ``last.pt`` holds full state for resuming.
+
+For the over/underfitting diagnosis the log also records, at every log
+interval, the training PSNR implied by the L2 loss, and at every validation
+the mean PSNR over the sigma > 0 cells (the sigma = 0 cells are an inverse
+crime under protocol v1). Neither changes checkpoint selection.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from ..evaluation.grid import mean_psnr
 from ..protocol.config import ProtocolConfig
 from .sampler import Batch, PatchSampler
 
@@ -90,6 +96,8 @@ class Trainer:
         self.metadata = metadata or {}
         self.device = sampler.device
         self.forward_fn = forward_fn or (lambda model, batch: model(batch.observed))
+        # the training PSNR is only meaningful for the default L2 loss on [0, 1]
+        self.loss_is_mse = criterion is None
         self.criterion = criterion or (
             lambda model, output, clean: F.mse_loss(output.float(), clean)
         )
@@ -162,6 +170,8 @@ class Trainer:
         start = time.time()
         score, rows = self.validate(self.model)
         self.model.train()
+        positive = [row for row in rows if row.get("sigma_255", 1) > 0]
+        score_sigma_pos = mean_psnr(positive) if positive and len(positive) < len(rows) else None
         improved = score > self.best_score
         if improved:
             self.best_score = score
@@ -176,6 +186,7 @@ class Trainer:
                 "event": "val",
                 "iteration": self.iteration,
                 "mean_psnr": score,
+                "mean_psnr_sigma_pos": score_sigma_pos,
                 "best": self.best_score,
                 "best_iteration": self.best_iteration,
                 "bad_checks": self.bad_checks,
@@ -212,10 +223,14 @@ class Trainer:
 
             if self.iteration % s.log_interval == 0 or self.iteration == s.iterations:
                 elapsed = time.time() - tick
+                mean_loss = running / count
                 event = {
                     "event": "train",
                     "iteration": self.iteration,
-                    "loss": running / count,
+                    "loss": mean_loss,
+                    "train_psnr": (
+                        -10.0 * math.log10(mean_loss) if self.loss_is_mse and mean_loss > 0 else None
+                    ),
                     "lr": self.scheduler.get_last_lr()[0],
                     "it_per_s": count / elapsed if elapsed > 0 else None,
                 }

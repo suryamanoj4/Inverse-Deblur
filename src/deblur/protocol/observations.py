@@ -34,7 +34,18 @@ def observe(
     seed: int,
     image_id: str,
     psf_name: str,
+    quantize: bool = False,
 ) -> np.ndarray:
-    """Degraded observation ``y = A x + eps`` for one cell, clipped to [0, 1]."""
+    """Degraded observation ``y = A x + eps`` for one cell, clipped to [0, 1].
+
+    With ``quantize`` (protocol v2) the observation is rounded to 8-bit levels,
+    as a camera would store it; this removes the sigma = 0 inverse crime.
+    """
     rng = cell_rng(seed, image_id, psf_name, sigma)
-    return degrade(image, kernel, sigma=sigma, rng=rng)
+    y = degrade(image, kernel, sigma=sigma, rng=rng)
+    return quantize_8bit(y) if quantize else y
+
+
+def quantize_8bit(y: np.ndarray) -> np.ndarray:
+    """Round values in [0, 1] to the nearest of 256 levels."""
+    return np.round(np.asarray(y, dtype=np.float64) * 255.0) / 255.0

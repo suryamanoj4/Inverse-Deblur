@@ -3,15 +3,22 @@
 
 Datasets are opt-in, so only what an experiment needs is downloaded:
 
-    bsds500   core, Tier 1 (default)      official Berkeley archive
-    gopro     Tier 2, stretch             manual archive or direct URL
-    levin     optional motion-kernel set  manual archive or direct URL
+    bsds500    core, Tier 1 (default)          official Berkeley archive
+    gopro      Tier 2, stretch                 manual archive or direct URL
+    levin      real kernels (v2 P2-extrap)     manual archive or direct URL
+    sun2013    real kernels (v2 P2-extrap)     manual archive or direct URL
+    kohler2012 real kernels (v2 P2-extrap)     manual archive or direct URL
+    div2k      Phase 2 real-data control       official ETH archive (800 train images, ~3.5 GB)
 
 Examples:
     python scripts/setup_datasets.py --datasets bsds500
     python scripts/setup_datasets.py --datasets bsds500 --write-protocol
     python scripts/setup_datasets.py --datasets gopro --gopro-archive /path/GoPro.zip
     python scripts/setup_datasets.py --datasets levin --levin-archive /path/kernels.zip
+    python scripts/setup_datasets.py --datasets div2k
+    # Phase 2: freeze protocol v2 (kernels as arrays + SHA-256) in artifacts/protocol/v2
+    python scripts/setup_datasets.py --write-protocol --version v2 \
+        --real-kernels levin=data/levin/kernels
     python scripts/setup_datasets.py --check
 
 Nothing is downloaded by the test suite. ``--check`` only inspects the local
@@ -35,7 +42,15 @@ BSDS500_URL = (
     "BSR/BSR_bsds500.tgz"
 )
 GOPRO_PAGE = "https://seungjunnah.github.io/Datasets/gopro.html"
-DATASETS = ("bsds500", "gopro", "levin")
+DIV2K_URL = "http://data.vision.ee.ethz.ch/cvl/DIV2K/DIV2K_train_HR.zip"
+DATASETS = ("bsds500", "gopro", "levin", "sun2013", "kohler2012", "div2k")
+KERNEL_SETS = ("levin", "sun2013", "kohler2012")
+MANUAL_HINTS = {
+    "gopro": GOPRO_PAGE,
+    "levin": "the Levin et al. (2009) project page",
+    "sun2013": "the Sun et al. (ICCP 2013) project page",
+    "kohler2012": "the Kohler et al. (ECCV 2012) benchmark page",
+}
 
 
 def _progress(blocks: int, block_size: int, total_size: int) -> None:
@@ -107,6 +122,13 @@ def kernel_files(directory: Path) -> list[Path]:
     return sorted(p for p in directory.rglob("*") if p.suffix.lower() in suffixes)
 
 
+def find_div2k(destination: Path) -> Path | None:
+    for candidate in (destination / "div2k" / "DIV2K_train_HR", destination / "DIV2K_train_HR"):
+        if candidate.is_dir() and any(candidate.glob("*.png")):
+            return candidate
+    return None
+
+
 def status(datasets: list[str], destination: Path) -> dict[str, bool]:
     result: dict[str, bool] = {}
     if "bsds500" in datasets:
@@ -117,10 +139,16 @@ def status(datasets: list[str], destination: Path) -> dict[str, bool]:
         gopro = find_gopro_root(destination)
         result["gopro"] = gopro is not None
         print(f"  gopro:    {'ready at ' + str(gopro) if gopro else 'missing'}")
-    if "levin" in datasets:
-        files = kernel_files(destination / "levin")
-        result["levin"] = len(files) > 0
-        print(f"  levin:    {len(files)} kernel files" if files else "  levin:    missing")
+    for name in KERNEL_SETS:
+        if name in datasets:
+            files = kernel_files(destination / name)
+            result[name] = len(files) > 0
+            print(f"  {name}: {len(files)} kernel files" if files else f"  {name}: missing")
+    if "div2k" in datasets:
+        div2k = find_div2k(destination)
+        result["div2k"] = div2k is not None
+        count = len(list(div2k.glob("*.png"))) if div2k else 0
+        print(f"  div2k:    {count} images at {div2k}" if div2k else "  div2k:    missing")
     return result
 
 
@@ -143,6 +171,22 @@ def setup_bsds500(destination: Path, force: bool, keep_archive: bool, dry_run: b
         )
 
 
+def setup_div2k(destination: Path, force: bool, keep_archive: bool, dry_run: bool) -> None:
+    if find_div2k(destination) is not None and not force:
+        print("  div2k already present, skipping")
+        return
+    archive = destination / "DIV2K_train_HR.zip"
+    if dry_run:
+        print(f"  would download {DIV2K_URL} -> {archive}")
+        return
+    download(DIV2K_URL, archive)
+    extract(archive, destination / "div2k")
+    if not keep_archive:
+        archive.unlink(missing_ok=True)
+    if find_div2k(destination) is None:
+        raise RuntimeError("DIV2K archive unpacked, but DIV2K_train_HR/*.png was not found")
+
+
 def setup_manual(
     name: str,
     destination: Path,
@@ -157,7 +201,7 @@ def setup_manual(
         print(f"  {name} already present, skipping")
         return
     if archive is None and url is None:
-        hint = GOPRO_PAGE if name == "gopro" else "the Levin et al. project page"
+        hint = MANUAL_HINTS.get(name, "the dataset's project page")
         raise SystemExit(
             f"{name}: pass --{name}-archive or --{name}-url "
             f"(see {hint}); nothing was downloaded"
@@ -188,16 +232,21 @@ def write_protocol(image_root: Path, destination: Path, args: argparse.Namespace
         standard_splits,
         validation_subset,
     )
-    from deblur.psf import protocol_psf_sets
+    import hashlib
+
+    import numpy as np
 
     splits = standard_splits(image_root)
     check_disjoint(splits)
     counts = {split: len(paths) for split, paths in splits.items()}
     levin_dir = destination / "levin"
+    real_kernel_dirs = tuple(tuple(item.split("=", 1)) for item in args.real_kernels)
     config = ProtocolConfig(
         data_root=str(image_root),
+        protocol_version=args.version,
+        real_kernel_dirs=real_kernel_dirs,
         patch_size=args.patch_size,
-        levin_dir=str(levin_dir) if kernel_files(levin_dir) else None,
+        levin_dir=str(levin_dir) if kernel_files(levin_dir) and args.version == "v1" else None,
         seed=args.seed,
         eval_crop=args.eval_crop,
         val_subset_size=args.val_subset_size,
@@ -209,17 +258,29 @@ def write_protocol(image_root: Path, destination: Path, args: argparse.Namespace
     val_entries = [
         path.resolve().relative_to(image_root.resolve()).as_posix() for path in val_subset
     ]
-    psf_sets = protocol_psf_sets()
+    psf_sets = config.psf_sets()
     psf_entries = {
         name: [
-            {"name": psf.name, "kind": psf.kind, "shape": list(psf.kernel.shape)}
+            {
+                "name": psf.name,
+                "kind": psf.kind,
+                "shape": list(psf.kernel.shape),
+                "sha256": hashlib.sha256(np.ascontiguousarray(psf.kernel).tobytes()).hexdigest(),
+            }
             for psf in kernels
         ]
         for name, kernels in psf_sets.items()
     }
 
     out_dir = Path(args.protocol_out)
+    if args.version != "v1" and args.protocol_out == "artifacts/protocol":
+        out_dir = out_dir / args.version
     out_dir.mkdir(parents=True, exist_ok=True)
+    # the kernels themselves, so a version can be checked or reloaded exactly
+    np.savez_compressed(
+        out_dir / "psfs.npz",
+        **{f"{set_name}/{psf.name}": psf.kernel for set_name, kernels in psf_sets.items() for psf in kernels},
+    )
     split_entries = manifest(splits, root=image_root)
     combined = {
         "image_root": str(image_root),
@@ -234,7 +295,7 @@ def write_protocol(image_root: Path, destination: Path, args: argparse.Namespace
     (out_dir / "psfs.json").write_text(json.dumps(psf_entries, indent=2))
     (out_dir / "manifest.json").write_text(json.dumps(combined, indent=2))
 
-    print("protocol written:")
+    print(f"protocol {args.version} written (kernel sets sha256 {config.manifest()['psf_sets_sha256'][:16]}...):")
     for split in ("train", "val", "test"):
         print(f"  {split:5s}: {counts[split]:4d} images")
     print(f"  validation subset: {len(val_entries)} images (seed {config.val_subset_seed})")
@@ -261,8 +322,15 @@ def main() -> int:
     parser.add_argument("--gopro-url", default=None, help="direct URL for a GoPro archive")
     parser.add_argument("--levin-archive", default=None, help="local Levin kernel archive")
     parser.add_argument("--levin-url", default=None, help="direct URL for a Levin kernel archive")
+    for name in ("sun2013", "kohler2012"):
+        parser.add_argument(f"--{name}-archive", default=None, help=f"local {name} kernel archive")
+        parser.add_argument(f"--{name}-url", default=None, help=f"direct URL for a {name} kernel archive")
     parser.add_argument("--write-protocol", action="store_true",
                         help="write protocol manifests after checking BSDS500")
+    parser.add_argument("--version", default="v1", choices=["v1", "v2"],
+                        help="protocol version to write (v2 goes to <protocol-out>/v2)")
+    parser.add_argument("--real-kernels", action="append", default=[], metavar="PREFIX=DIR",
+                        help="v2: directory of real recorded kernel files to add to P2_extrap (repeatable)")
     parser.add_argument("--protocol-out", default="artifacts/protocol")
     parser.add_argument("--patch-size", type=int, default=128)
     parser.add_argument("--eval-crop", type=int, default=256)
@@ -295,17 +363,21 @@ def main() -> int:
             args.dry_run,
             find_gopro_root,
         )
-    if "levin" in datasets:
-        setup_manual(
-            "levin",
-            destination,
-            Path(args.levin_archive) if args.levin_archive else None,
-            args.levin_url,
-            args.force,
-            args.keep_archive,
-            args.dry_run,
-            lambda root: (root / "levin") if kernel_files(root / "levin") else None,
-        )
+    for name in KERNEL_SETS:
+        if name in datasets:
+            archive = getattr(args, f"{name}_archive")
+            setup_manual(
+                name,
+                destination,
+                Path(archive) if archive else None,
+                getattr(args, f"{name}_url"),
+                args.force,
+                args.keep_archive,
+                args.dry_run,
+                lambda root, name=name: (root / name) if kernel_files(root / name) else None,
+            )
+    if "div2k" in datasets:
+        setup_div2k(destination, args.force, args.keep_archive, args.dry_run)
 
     print("status:")
     status(datasets, destination)

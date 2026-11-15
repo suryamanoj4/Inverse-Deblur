@@ -23,18 +23,45 @@ def evaluate_grid(
     seed: int,
     full_metrics: bool = False,
     lpips_metric=None,
+    quantize: bool = False,
 ) -> list[dict]:
     """Score ``restore_fn(y, psf, sigma)`` on every (image, PSF, sigma) cell.
 
     ``restore_fn`` receives the PSF and sigma so the same harness serves the
-    physics-aware arms; M1 restorers ignore them.
+    physics-aware arms; M1 restorers ignore them. ``quantize`` rounds every
+    observation to 8 bits (protocol v2).
+
+    A restorer may also expose ``batch(ys, psfs, sigma)`` (and optionally
+    ``batch_size``) to restore several PSFs of one image and noise level in one
+    call; the cells and the row order are the same either way.
     """
+    batch_fn = getattr(restore_fn, "batch", None)
     rows = []
     for image_id, x in images:
+        estimates = {}
+        if batch_fn is not None:
+            # one call per (image, sigma) and chunk of PSFs; same cells, same order
+            chunk = max(1, int(getattr(restore_fn, "batch_size", len(psfs))))
+            for sigma in noise_levels:
+                for start in range(0, len(psfs), chunk):
+                    group = psfs[start : start + chunk]
+                    ys = [
+                        observe(x, psf.kernel, sigma, seed=seed, image_id=image_id,
+                                psf_name=psf.name, quantize=quantize)
+                        for psf in group
+                    ]
+                    for psf, y, x_hat in zip(group, ys, batch_fn(ys, group, sigma)):
+                        estimates[(psf.name, sigma)] = (y, x_hat)
         for psf in psfs:
             for sigma in noise_levels:
-                y = observe(x, psf.kernel, sigma, seed=seed, image_id=image_id, psf_name=psf.name)
-                x_hat = restore_fn(y, psf, sigma)
+                if batch_fn is not None:
+                    y, x_hat = estimates[(psf.name, sigma)]
+                else:
+                    y = observe(
+                        x, psf.kernel, sigma, seed=seed, image_id=image_id, psf_name=psf.name,
+                        quantize=quantize,
+                    )
+                    x_hat = restore_fn(y, psf, sigma)
                 row = {
                     "image": image_id,
                     "psf": psf.name,

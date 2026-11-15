@@ -29,20 +29,20 @@ class TestUnrolledCommon(unittest.TestCase):
     def test_delta_spectrum_is_identity(self):
         x = torch.rand(2, 1, 8, 8)
         spectrum = torch.ones(2, 8, 8, dtype=torch.complex64)
-        torch.testing.assert_close(fft_convolve(x, spectrum), x, atol=1e-5)
+        torch.testing.assert_close(fft_convolve(x, spectrum), x, rtol=0, atol=1e-5)
 
     def test_data_gradient_zero_at_fixed_point(self):
         y = torch.rand(2, 1, 8, 8)
         spectrum = torch.ones(2, 8, 8, dtype=torch.complex64)
         grad = data_gradient(y, y, spectrum)
-        torch.testing.assert_close(grad, torch.zeros_like(grad), atol=1e-5)
+        torch.testing.assert_close(grad, torch.zeros_like(grad), rtol=0, atol=1e-5)
 
     def test_data_step_with_delta_kernel(self):
         y = torch.rand(2, 1, 8, 8)
         spectrum = torch.ones(2, 8, 8, dtype=torch.complex64)
         mu = torch.full((2, 1, 1, 1), 1.0)
         out = data_step(y, spectrum, y, mu)
-        torch.testing.assert_close(out, y, atol=1e-5)
+        torch.testing.assert_close(out, y, rtol=0, atol=1e-5)
 
 
 @unittest.skipUnless(HAS_TORCH, "torch is not installed")
@@ -70,6 +70,23 @@ class TestUnrolledModels(unittest.TestCase):
             self.assertIsNotNone(build_model(name))
         with self.assertRaises(ValueError):
             build_model("unknown")
+
+    def test_usrnet_handles_sizes_not_divisible_by_eight(self):
+        # validation and test images are 481x321; the prior downsamples three times
+        model = USRNet(n_iter=1, width=8).eval()
+        y = torch.rand(1, 1, 21, 13)
+        spectrum = torch.ones(1, 21, 13, dtype=torch.complex64)
+        with torch.no_grad():
+            out = model(y, spectrum, torch.tensor([0.05]))
+        self.assertEqual(out.shape, y.shape)
+
+    def test_ista_models_start_as_gradient_steps(self):
+        # with a delta kernel the gradient step leaves y unchanged, so an
+        # untrained network must return y (it used to destroy the input)
+        for model in (ISTANet(n_iter=3, channels=8), LearnedISTA(n_iter=3, hidden=8)):
+            with self.subTest(model=type(model).__name__), torch.no_grad():
+                out = model(self.y, self.spectrum, self.sigma)
+                torch.testing.assert_close(out, self.y, rtol=0, atol=1e-6)
 
     def test_usrnet_is_physics_aware(self):
         # USRNet must consume the kernel spectrum and sigma; a wrong kernel

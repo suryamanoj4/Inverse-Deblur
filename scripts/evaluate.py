@@ -19,6 +19,9 @@ Examples:
     # seeded 50-image test subset, split across 12 processes (shard 3 of 12)
     python scripts/evaluate.py --arm m2 --data-root data --method fista_tv \
         --subset 50 --shard 3/12 --out artifacts/eval/m2_fista_tv/shard03.csv
+    # protocol v2 (Phase 2): wider kernel library, 8-bit quantized observations
+    python scripts/evaluate.py --arm m1 --data-root data --protocol v2 \
+        --checkpoint checkpoints/v2/m1/nafnet/best.pt
     # FISTA-TV and ADMM-EPLL on the GPU (same solvers, torch arithmetic)
     python scripts/evaluate.py --arm m2 --data-root data --method admm_epll \
         --gmm checkpoints/m2/gmm_K200.npz --m2-backend torch --stride 1
@@ -49,7 +52,6 @@ from deblur.methods.classical import (
     wiener,
 )
 from deblur.protocol import ProtocolConfig, validation_subset
-from deblur.psf import protocol_psf_sets
 
 M2_METHODS = ("wiener", "richardson_lucy", "fista_tv", "admm_epll")
 
@@ -102,7 +104,9 @@ def build_restorer(args, config: ProtocolConfig, device):
             from deblur.methods.classical.torch_backend import (
                 TorchGMM,
                 admm_epll_torch,
+                admm_epll_torch_batch,
                 fista_tv_torch,
+                fista_tv_torch_batch,
             )
         lambdas = parse_values(args.lambda_values)
         steps = args.steps
@@ -127,6 +131,18 @@ def build_restorer(args, config: ProtocolConfig, device):
                     n_iter=steps or 100,
                     tv_iter=args.inner_steps or 30,
                 )
+
+            if torch_backend:
+                def restore_batch(ys, psfs, sigma):
+                    lam = resolve_per_sigma(lambdas, sigma, config.noise_levels)
+                    lam = suggest_tv_lambda(sigma) if lam is None else lam
+                    return fista_tv_torch_batch(
+                        ys, [psf.kernel for psf in psfs], [lam] * len(ys),
+                        n_iter=steps or 100, tv_iter=args.inner_steps or 30, device=device,
+                    )
+
+                restore_fn.batch = restore_batch
+                restore_fn.batch_size = args.m2_batch
         else:
             if args.gmm is None:
                 raise SystemExit("admm_epll needs --gmm (train it with scripts/train_gmm.py)")
@@ -147,6 +163,17 @@ def build_restorer(args, config: ProtocolConfig, device):
                     patch_size=8,
                     stride=args.stride,
                 )
+
+            if torch_backend:
+                def restore_batch(ys, psfs, sigma):
+                    lam = resolve_per_sigma(lambdas, sigma, config.noise_levels)
+                    return admm_epll_torch_batch(
+                        ys, [psf.kernel for psf in psfs], gmm, sigma=sigma, lam=lam,
+                        n_iter=steps or 10, patch_size=8, stride=args.stride,
+                    )
+
+                restore_fn.batch = restore_batch
+                restore_fn.batch_size = args.m2_batch
         return restore_fn, {
             "arm": "M2",
             "method": args.method,
@@ -166,6 +193,10 @@ def build_restorer(args, config: ProtocolConfig, device):
         raise SystemExit("checkpoint metadata has no 'model' field")
     if meta.get("deviations"):
         print(f"warning: checkpoint has protocol deviations: {meta['deviations']}")
+    trained = meta.get("protocol_version", "v1")
+    if trained != config.protocol_version:
+        # deliberate for 2C-3 / 2C-5 (cross-protocol ablations); recorded in the metadata
+        print(f"note: checkpoint trained under protocol {trained}, evaluated under {config.protocol_version}")
     if args.arm == "m1":
         from deblur.methods.direct import build_model
         from deblur.training import model_restorer
@@ -187,7 +218,10 @@ def build_restorer(args, config: ProtocolConfig, device):
         "checkpoint": str(args.checkpoint),
         "checkpoint_metadata": {
             key: meta.get(key)
-            for key in ("parameters", "regime", "train_psf_set", "noise_levels_255", "deviations")
+            for key in (
+                "parameters", "regime", "protocol_version", "train_psf_set", "noise_levels_255",
+                "training_data", "deviations",
+            )
         },
     }
 
@@ -217,6 +251,12 @@ def main() -> None:
                         help="seeded N-image subset of the split (val: --subset 10 is the protocol val subset)")
     parser.add_argument("--shard", default=None, help="INDEX/COUNT: evaluate every COUNT-th image from INDEX")
     parser.add_argument("--lpips", action="store_true", help="also compute LPIPS")
+    parser.add_argument("--protocol", default="v1", choices=["v1", "v2"],
+                        help="protocol version (v1 = mid-evaluation, frozen; v2 = Phase 2)")
+    parser.add_argument("--real-kernels", action="append", default=[], metavar="PREFIX=DIR",
+                        help="v2 only: add real recorded kernels from DIR to P2_extrap (repeatable)")
+    parser.add_argument("--m2-batch", type=int, default=8,
+                        help="torch-backend M2: PSFs solved per GPU call (memory vs speed)")
     parser.add_argument("--device", default=None, help="M1/M3 and torch-backend M2 device (default: cuda if available)")
     parser.add_argument("--out", default=None, help="CSV path")
     args = parser.parse_args()
@@ -230,7 +270,11 @@ def main() -> None:
     device = args.device or (
         "cuda" if torch is not None and torch.cuda.is_available() else "cpu"
     )
-    config = ProtocolConfig(data_root=args.data_root)
+    config = ProtocolConfig(
+        data_root=args.data_root,
+        protocol_version=args.protocol,
+        real_kernel_dirs=tuple(tuple(item.split("=", 1)) for item in args.real_kernels),
+    )
     dataset = BSDS500(config.data_root, split=args.split, luminance=config.luminance)
     paths = dataset.paths[: args.limit] if args.limit else dataset.paths
     if args.subset:
@@ -253,7 +297,7 @@ def main() -> None:
             raise SystemExit(f"--sigmas must be on the noise grid {config.noise_levels_over_255}")
 
     set_names = args.psf_sets.split(",") if args.psf_sets else list(config.eval_psf_sets)
-    psf_sets = protocol_psf_sets()
+    psf_sets = config.psf_sets()
     unknown = set(set_names) - set(psf_sets)
     if unknown:
         raise SystemExit(f"unknown PSF sets {sorted(unknown)}; choose from {sorted(psf_sets)}")
@@ -283,9 +327,11 @@ def main() -> None:
             seed=config.seed,
             full_metrics=True,
             lpips_metric=lpips_metric,
+            quantize=config.quantize_observations,
         )
         baseline_rows = evaluate_grid(
-            identity_restorer, images, psfs, noise_levels, seed=config.seed
+            identity_restorer, images, psfs, noise_levels, seed=config.seed,
+            quantize=config.quantize_observations,
         )
         merge_baseline(set_rows, baseline_rows)
         for row in set_rows:

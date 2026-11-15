@@ -57,8 +57,9 @@ class ResUNet(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         H, W = x.shape[-2:]
-        pad_h = (-H) % 4
-        pad_w = (-W) % 4
+        # three stride-2 downsamplings: pad to a multiple of 8 so the skips align
+        pad_h = (-H) % 8
+        pad_w = (-W) % 8
         if pad_h or pad_w:
             x = F.pad(x, (0, pad_w, 0, pad_h), mode="circular")
         e1 = self.enc1(self.intro(x))
@@ -120,4 +121,6 @@ class USRNet(nn.Module):
             sigma_eff = torch.sqrt(lam / mu)
             sigma_map = sigma_eff.expand(-1, 1, x.shape[-2], x.shape[-1])
             z = x + self.prior(torch.cat([x, sigma_map], dim=1))
-        return x
+        # the estimate is the last prior output, as in USRNet; returning the data
+        # step would leave the final prior pass unused
+        return z

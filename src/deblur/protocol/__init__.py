@@ -1,5 +1,5 @@
-from .config import ProtocolConfig
-from .observations import cell_rng, observe
+from .config import ProtocolConfig, psf_sets_digest
+from .observations import cell_rng, observe, quantize_8bit
 from .splits import check_disjoint, manifest, save_manifest, standard_splits, validation_subset
 
 __all__ = [
@@ -8,6 +8,8 @@ __all__ = [
     "check_disjoint",
     "manifest",
     "observe",
+    "psf_sets_digest",
+    "quantize_8bit",
     "save_manifest",
     "standard_splits",
     "validation_subset",

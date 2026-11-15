@@ -30,6 +30,10 @@ class LearnedISTA(nn.Module):
         self.theta = nn.Parameter(torch.full((n_iter,), -4.0))  # softplus -> 0.018
         self.analysis = nn.Conv2d(1, hidden, 1)
         self.synthesis = nn.Conv2d(hidden, 1, 1)
+        # residual on the gradient step, zero-initialised: each iteration starts
+        # as a plain gradient step instead of a random 1x1 projection
+        nn.init.zeros_(self.synthesis.weight)
+        nn.init.zeros_(self.synthesis.bias)
 
     def forward(
         self,
@@ -44,5 +48,5 @@ class LearnedISTA(nn.Module):
             r = x - torch.sigmoid(self.step[t]) * gradient
             code = self.analysis(r)
             code = soft_threshold(code, F.softplus(self.theta[t]))
-            x = self.synthesis(code)
+            x = r + self.synthesis(code)
         return x

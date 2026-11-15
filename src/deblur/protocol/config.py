@@ -3,14 +3,53 @@
 These values are the single source of truth. ``manifest()`` is written to disk
 with every run, so the PSF split, sampling policy, checkpoint rule, and learned
 arm hyperparameters are all recorded rather than living only in prose.
+
+Two protocol versions exist. ``v1`` is the mid-evaluation protocol and is
+frozen. ``v2`` (Phase 2) widens the kernel library, trains on a kernel pool
+(``P1_pool``) instead of the 12 test kernels, samples kernels family-balanced,
+and quantizes every observation to 8 bits. Fields left at ``None`` take the
+version's default.
 """
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
-from ..psf.library import protocol_psf_sets
+import numpy as np
+
+from ..psf.library import PROTOCOL_VERSIONS, PSF, protocol_psf_sets
+
+# per-version defaults for fields left at None
+VERSION_DEFAULTS = {
+    "v1": {
+        "train_psf_set": "P1",
+        "condition_sampling": "uniform_independent",
+        "quantize_observations": False,
+    },
+    "v2": {
+        "train_psf_set": "P1_pool",
+        "condition_sampling": "family_balanced",
+        "quantize_observations": True,
+    },
+}
+
+
+@lru_cache(maxsize=8)
+def _cached_psf_sets(version: str, real_kernel_dirs: tuple[tuple[str, str], ...]) -> dict[str, list[PSF]]:
+    return protocol_psf_sets(version, real_kernel_dirs=real_kernel_dirs)
+
+
+def psf_sets_digest(psf_sets: dict[str, list[PSF]]) -> str:
+    """SHA-256 over every kernel's name and values: changes if any set changes."""
+    digest = hashlib.sha256()
+    for set_name in sorted(psf_sets):
+        for psf in psf_sets[set_name]:
+            digest.update(f"{set_name}/{psf.name}/{psf.kernel.shape}".encode())
+            digest.update(np.ascontiguousarray(psf.kernel, dtype=np.float64).tobytes())
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -18,12 +57,17 @@ class ProtocolConfig:
     """Configuration shared by every arm."""
 
     data_root: str
+    protocol_version: str = "v1"
     patch_size: int = 128
     # stored as absolute fractions; 1/255 == noise level "1" on the usual grid
     noise_levels: tuple[float, ...] = (0.0, 1 / 255, 5 / 255, 15 / 255, 25 / 255)
     gaussian_sigmas: tuple[float, ...] = (0.7, 1.2, 1.6, 2.0)
     defocus_radii: tuple[float, ...] = (3.0, 5.0, 7.0, 9.0)
     levin_dir: str | None = None
+    # v2 only: (prefix, directory) pairs of real recorded kernels added to P2_extrap
+    real_kernel_dirs: tuple[tuple[str, str], ...] = ()
+    # v2 only: round every observation to 8-bit levels after noise and clipping
+    quantize_observations: bool | None = None
     seed: int = 0
     luminance: bool = True
     # "full" evaluates the whole test image; "center_crop" is the secondary view
@@ -33,11 +77,12 @@ class ProtocolConfig:
     # --- learned-arm protocol -------------------------------------------------
     # single_model: one M1 across the grid; per_noise: the oracle-sigma ablation
     m1_regime: str = "single_model"
-    # uniform_independent: k ~ U(P1), sigma ~ U(noise grid), per patch
-    condition_sampling: str = "uniform_independent"
+    # uniform_independent: k ~ U(train set), sigma ~ U(noise grid), per patch;
+    # family_balanced: kernel family uniform first, then a kernel within it
+    condition_sampling: str | None = None
     # mean_val_psnr: one checkpoint chosen on the fixed validation grid
     checkpoint_rule: str = "mean_val_psnr"
-    train_psf_set: str = "P1"
+    train_psf_set: str | None = None
     eval_psf_sets: tuple[str, ...] = ("P1", "P2_interp", "P2_extrap")
     val_subset_size: int = 10
     val_subset_seed: int = 0
@@ -56,6 +101,16 @@ class ProtocolConfig:
     early_stop_patience: int = 4
 
     def __post_init__(self) -> None:
+        if self.protocol_version not in PROTOCOL_VERSIONS:
+            raise ValueError(f"protocol_version must be one of {PROTOCOL_VERSIONS}")
+        for name, value in VERSION_DEFAULTS[self.protocol_version].items():
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, value)
+        if self.real_kernel_dirs and self.protocol_version == "v1":
+            raise ValueError("real_kernel_dirs belong to protocol v2; v1 is frozen")
+        object.__setattr__(
+            self, "real_kernel_dirs", tuple((str(a), str(b)) for a, b in self.real_kernel_dirs)
+        )
         if self.patch_size <= 0:
             raise ValueError("patch_size must be positive")
         if not self.noise_levels:
@@ -82,7 +137,7 @@ class ProtocolConfig:
         if self.loss not in ("l1", "l2"):
             raise ValueError("loss must be 'l1' or 'l2'")
 
-        psf_sets = protocol_psf_sets()
+        psf_sets = self.psf_sets()
         if self.train_psf_set not in psf_sets:
             raise ValueError(f"train_psf_set must be one of {tuple(psf_sets)}")
         if not self.eval_psf_sets:
@@ -109,6 +164,15 @@ class ProtocolConfig:
         if self.weight_decay < 0:
             raise ValueError("weight_decay must be non-negative")
 
+    def psf_sets(self) -> dict[str, list[PSF]]:
+        """The kernel sets of this protocol version (cached)."""
+        return _cached_psf_sets(self.protocol_version, self.real_kernel_dirs)
+
+    @property
+    def val_psf_set(self) -> str:
+        """Kernels used for checkpoint selection: the in-distribution test set."""
+        return "P1"
+
     @property
     def noise_levels_over_255(self) -> tuple[int, ...]:
         """Noise levels in the usual ``/255`` notation, for reporting."""
@@ -116,8 +180,12 @@ class ProtocolConfig:
 
     def manifest(self) -> dict:
         """JSON-serialisable snapshot of the protocol, including PSF membership."""
-        psf_sets = protocol_psf_sets()
+        psf_sets = self.psf_sets()
         return {
+            "protocol_version": self.protocol_version,
+            "quantize_observations": self.quantize_observations,
+            "real_kernel_dirs": [list(pair) for pair in self.real_kernel_dirs],
+            "psf_sets_sha256": psf_sets_digest(psf_sets),
             "data_root": str(Path(self.data_root)),
             "patch_size": self.patch_size,
             "noise_levels": list(self.noise_levels),

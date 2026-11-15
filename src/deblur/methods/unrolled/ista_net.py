@@ -48,6 +48,12 @@ class ISTANet(nn.Module):
                 for _ in range(n_iter)
             ]
         )
+        # ISTA-Net+: the transform branch is a residual on the gradient step.
+        # Zero-initialising its last layer makes every phase start as a plain
+        # gradient step, so the untrained network does not destroy the input.
+        for synthesis in self.synthesis:
+            nn.init.zeros_(synthesis[-1].weight)
+            nn.init.zeros_(synthesis[-1].bias)
 
     def forward(
         self,
@@ -62,5 +68,5 @@ class ISTANet(nn.Module):
             r = x - torch.sigmoid(self.rho[t]) * gradient
             code = self.analysis[t](r)
             code = soft_threshold(code, F.softplus(self.theta[t]))
-            x = self.synthesis[t](code)
+            x = r + self.synthesis[t](code)
         return x

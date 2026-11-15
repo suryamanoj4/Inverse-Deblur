@@ -1,21 +1,31 @@
 #!/usr/bin/env python3
 """H3 stability test: PGD perturbations of the observation.
 
-Protocol (transfer attack):
-1. White-box PGD on the attack arm (M1 by default) finds a small perturbation
-   ``eta`` of the observation that maximizes its reconstruction error.
+Protocol:
+1. White-box PGD on the attack arm finds a small perturbation ``eta`` of the
+   observation that maximizes its reconstruction error.
 2. Every available arm is evaluated on the same ``y + eta``.
 
-This tests whether a perturbation that breaks the data-only network also breaks
-the physics-aware arms. It is a transfer attack, not each method's own
-worst-case perturbation; per-method white-box attacks for M2 require a
-gradient-enabled solver and are a follow-up.
+With ``--attack-arm m1`` (default) or ``m3`` this is a transfer attack for M2:
+does a perturbation that breaks the network also break the solver? With
+``--attack-arm m2`` (Phase 2, experiment 2C-7) PGD differentiates through the
+M2 solver itself, giving M2's own worst case; the other arms are then the
+transfer targets. Backpropagating through all 100x30 FISTA-TV iterations does
+not fit in GPU memory, so the attack uses a reduced-iteration surrogate
+(``--attack-m2-steps`` / ``--attack-m2-inner-steps``) while every method is
+still *evaluated* with its full solver. ADMM-EPLL's component choice is
+piecewise constant, so its gradient is that of the selected Wiener filters.
 
 Examples:
     python3 scripts/stability_test.py --data-root data \
         --m1-checkpoint checkpoints/m1/nafnet/best.pt \
         --gmm checkpoints/m2/epll_gmm_K200.npz \
         --psf-set P1 --sigmas 1,15 --eps 0.005,0.01,0.02 --limit 10
+
+    # white-box attack on M2 itself (2C-7), FISTA-TV surrogate of 20 x 10 iterations
+    python3 scripts/stability_test.py --data-root data --attack-arm m2 --m2-method fista_tv \
+        --lambda-values 2.5e-05,0.000196078,0.00196078,0.0117647,0.0392157 \
+        --psf-set P1 --sigmas 5,15 --eps 0.005,0.01,0.02 --limit 10
 
     # smaller smoke test
     python3 scripts/stability_test.py --data-root data \
@@ -42,7 +52,9 @@ from deblur.methods.classical import GMM, suggest_tv_lambda
 from deblur.methods.classical.torch_backend import (
     TorchGMM,
     admm_epll_torch,
+    admm_epll_torch_diff,
     fista_tv_torch,
+    fista_tv_torch_diff,
 )
 from deblur.methods.direct import build_model as build_direct
 from deblur.methods.unrolled import build_model as build_unrolled
@@ -50,7 +62,6 @@ from deblur.metrics import data_consistency, pgd_attack_torch, psnr, ssim
 from deblur.operators.fft_conv import kernel_spectrum
 from deblur.protocol import ProtocolConfig
 from deblur.protocol.observations import observe
-from deblur.psf import protocol_psf_sets
 
 
 def git_commit() -> str | None:
@@ -116,7 +127,12 @@ def main() -> None:
     parser.add_argument("--eps", default="0.005,0.01,0.02", help="relative L2 budgets")
     parser.add_argument("--steps", type=int, default=20, help="PGD iterations")
     parser.add_argument("--step-scale", type=float, default=2.0, help="step size = step_scale * radius / steps")
-    parser.add_argument("--attack-arm", default="m1", choices=["m1", "m3"])
+    parser.add_argument("--attack-arm", default="m1", choices=["m1", "m2", "m3"])
+    parser.add_argument("--attack-m2-steps", type=int, default=None,
+                        help="m2 attack surrogate iterations (default: 20 for FISTA-TV, 10 for ADMM-EPLL)")
+    parser.add_argument("--attack-m2-inner-steps", type=int, default=10,
+                        help="m2 attack surrogate: FISTA-TV inner TV iterations")
+    parser.add_argument("--protocol", default="v1", choices=["v1", "v2"])
     parser.add_argument("--m1-checkpoint", default="checkpoints/m1/nafnet/best.pt")
     parser.add_argument("--m3-checkpoint", default=None)
     parser.add_argument("--m2-method", default="admm_epll", choices=["admm_epll", "fista_tv"])
@@ -130,7 +146,7 @@ def main() -> None:
     args = parser.parse_args()
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-    config = ProtocolConfig(data_root=args.data_root)
+    config = ProtocolConfig(data_root=args.data_root, protocol_version=args.protocol)
     torch.manual_seed(config.seed)
     np.random.seed(config.seed)
 
@@ -148,6 +164,7 @@ def main() -> None:
         return torch.clamp(m1_model(y_t), 0.0, 1.0)
 
     m2_restore = None
+    m2_attack = None
     m2_name = None
     if args.m2_method == "admm_epll":
         if args.gmm is None:
@@ -171,6 +188,13 @@ def main() -> None:
                 )
 
             m2_name = "m2_admm_epll"
+
+            def m2_attack(z, kernel, sigma):
+                lam = resolve_per_sigma(lambda_values, sigma, config.noise_levels)
+                return admm_epll_torch_diff(
+                    z, kernel, gmm_t, sigma=sigma, lam=lam,
+                    n_iter=args.attack_m2_steps or args.m2_steps or 10, stride=args.stride,
+                )
     else:
         lambda_values = parse_values(args.lambda_values)
 
@@ -187,11 +211,19 @@ def main() -> None:
 
         m2_name = "m2_fista_tv"
 
-    if args.psf_set not in protocol_psf_sets():
-        raise SystemExit(
-            f"unknown PSF set {args.psf_set!r}; choose from {sorted(protocol_psf_sets())}"
-        )
-    psfs = protocol_psf_sets()[args.psf_set]
+        def m2_attack(z, kernel, sigma):
+            lam = resolve_per_sigma(lambda_values, sigma, config.noise_levels)
+            return fista_tv_torch_diff(
+                z, kernel, suggest_tv_lambda(sigma) if lam is None else lam,
+                n_iter=args.attack_m2_steps or 20, tv_iter=args.attack_m2_inner_steps,
+            )
+
+    if args.attack_arm == "m2" and m2_restore is None:
+        raise SystemExit("--attack-arm m2 needs an M2 solver (pass --gmm for admm_epll)")
+    psf_sets = config.psf_sets()
+    if args.psf_set not in psf_sets:
+        raise SystemExit(f"unknown PSF set {args.psf_set!r}; choose from {sorted(psf_sets)}")
+    psfs = psf_sets[args.psf_set]
     if args.psf_limit:
         psfs = psfs[: args.psf_limit]
     sigmas = [value / 255.0 for value in (parse_values(args.sigmas) or [])]
@@ -211,7 +243,7 @@ def main() -> None:
         for path in paths
     ]
     print(
-        f"H3 transfer attack: {len(images)} images x {len(psfs)} PSFs x {len(sigmas)} sigmas "
+        f"H3 stability: {len(images)} images x {len(psfs)} PSFs x {len(sigmas)} sigmas "
         f"x {len(eps_values)} budgets; attack={args.attack_arm}; device={device}"
     )
     print(
@@ -231,6 +263,7 @@ def main() -> None:
                     seed=config.seed,
                     image_id=image_id,
                     psf_name=psf.name,
+                    quantize=config.quantize_observations,
                 )
                 y_t = torch.as_tensor(y_np, dtype=torch.float32, device=device)[None, None]
                 k_t = torch.as_tensor(
@@ -287,7 +320,12 @@ def main() -> None:
 
                 for eps_rel in eps_values:
                     radius = float(eps_rel * np.linalg.norm(y_np))
-                    attack_forward = m1_forward if args.attack_arm == "m1" else m3_forward
+                    if args.attack_arm == "m1":
+                        attack_forward = m1_forward
+                    elif args.attack_arm == "m3":
+                        attack_forward = m3_forward
+                    else:
+                        attack_forward = lambda z: m2_attack(z, psf.kernel, sigma)
                     eta = pgd_attack_torch(
                         attack_forward,
                         y_t,
@@ -370,8 +408,17 @@ def main() -> None:
     summary_path.write_text(json.dumps(summary, indent=2))
     metadata_path = out.with_name(out.stem + "_metadata.json")
     metadata = {
-        "experiment": "H3 stability (transfer attack)",
+        "experiment": (
+            "H3 stability (white-box on M2, transfer to M1/M3)"
+            if args.attack_arm == "m2"
+            else "H3 stability (transfer attack)"
+        ),
         "attack_arm": args.attack_arm,
+        "attack_m2_surrogate": (
+            {"steps": args.attack_m2_steps, "inner_steps": args.attack_m2_inner_steps}
+            if args.attack_arm == "m2"
+            else None
+        ),
         "m1_checkpoint": str(args.m1_checkpoint),
         "m1_metadata": m1_meta,
         "m3_checkpoint": str(args.m3_checkpoint) if args.m3_checkpoint else None,
