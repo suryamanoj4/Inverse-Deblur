@@ -19,7 +19,7 @@ Times are **single-GPU wall clock on the RTX 3090 Ti, with the GPU to ourselves*
 
 ## 0. Setup (≈1 h, mostly downloads)
 
-- [ ] Freeze protocol v2 (kernels + SHA-256): `python scripts/setup_datasets.py --write-protocol --version v2` (add `--real-kernels levin=DIR` etc. **before** any v2 run if real kernels are wanted; the kernel sets are frozen once v2 runs start). **1 min**
+- [x] Freeze protocol v2 (kernels + SHA-256): `python scripts/setup_datasets.py --write-protocol --version v2` (add `--real-kernels levin=DIR` etc. **before** any v2 run if real kernels are wanted; the kernel sets are frozen once v2 runs start). **1 min**
 - [ ] Optional real kernels for $P_2$-extrap: `--datasets levin,sun2013,kohler2012` with `--<name>-archive` or `--<name>-url`, then point `--real-kernels PREFIX=DIR` at a folder of kernel files only. **≈15 min**
 - [ ] DIV2K for the 2A-3 control: `python scripts/setup_datasets.py --datasets div2k` (3.5 GB). **≈20–40 min**
 
@@ -27,9 +27,9 @@ Times are **single-GPU wall clock on the RTX 3090 Ti, with the GPU to ourselves*
 
 | ✓ | Run | Command | Time |
 |---|---|---|---|
-| [ ] | 2A-1 NAFNet, 50 real images | `scripts/train_m1.py --data-root data --train-images 50` | 2.8 h |
-| [ ] | 2A-1 NAFNet, 100 real images | `scripts/train_m1.py --data-root data --train-images 100` | 2.8 h |
-| [ ] | 2A-1 evaluate both on the v1 test grid (200-image NAFNet run already exists) | `scripts/evaluate.py --arm m1 --checkpoint checkpoints/m1/nafnet_real50/best.pt` (and `_real100`) | 2 × ≈1 h |
+| [x] | 2A-1 NAFNet, 50 real images | `scripts/train_m1.py --data-root data --train-images 50` | 2.8 h |
+| [x] | 2A-1 NAFNet, 100 real images | `scripts/train_m1.py --data-root data --train-images 100` | 2.8 h |
+| [x] | 2A-1 evaluate both on the v1 test grid (200-image NAFNet run already exists) | `scripts/evaluate.py --arm m1 --checkpoint checkpoints/m1/nafnet_real50/best.pt` (and `_real100`) | 2 × ≈1 h |
 | [ ] | 2A-3 NAFNet real + DIV2K | `scripts/train_m1.py --data-root data --extra-images data/div2k/DIV2K_train_HR --extra-name div2k --p-real 0.5` + evaluate | 2.8 h + 1 h |
 | ⛔ | **Go/no-go gate** (spec §12.2): generate `syn-v1` only if 50 → 100 → 200 is still rising **and** DIV2K helps | — | — |
 | [ ] | Generate raw images (needs `pip install diffusers transformers accelerate`, model download 2–7 GB) | `scripts/generate_synthetic.py --out data/synthetic/raw-v1 --count 2600` | 0.5 h (SDXL-Turbo) – 2.5 h (SD 1.5) |
@@ -48,10 +48,10 @@ Times are **single-GPU wall clock on the RTX 3090 Ti, with the GPU to ourselves*
 
 | ✓ | Run | Command | Time |
 |---|---|---|---|
-| [ ] | USRNet | `scripts/train_m3.py --data-root data --model usrnet` | ≈1 h |
-| [ ] | ISTA-Net | `--model ista_net` | ≈0.3 h |
-| [ ] | LISTA | `--model lista` | ≈0.3 h |
-| [ ] | Evaluate the three on the v1 grid | `scripts/evaluate.py --arm m3 --checkpoint checkpoints/m3/<model>/best.pt` | 3 × ≈1 h |
+| [x] | USRNet | `scripts/train_m3.py --data-root data --model usrnet` | ≈1 h |
+| [x] | ISTA-Net | `--model ista_net` | ≈0.3 h |
+| [x] | LISTA | `--model lista` | ≈0.3 h |
+| [x] | Evaluate the three on the v1 grid | `scripts/evaluate.py --arm m3 --checkpoint checkpoints/m3/<model>/best.pt` | 3 × ≈1 h |
 | [ ] | M3 LPIPS (50-image subset) and H3 transfer with M3 as attacker and target | `evaluate.py … --subset 50 --sigmas 1,5,15,25 --lpips`; `stability_test.py --m3-checkpoint … [--attack-arm m3]` | ≈0.5 h + ≈4 h |
 
 **2B total:** ≈9 GPU-h.
@@ -95,3 +95,10 @@ Use the data setting chosen at the gate (real only, or real + `syn-v1`) for **ev
 | **Total** | **≈90 GPU-h without synthetic data, ≈105 with** | ≈4–4.5 days of continuous GPU; ≈7–9 days on a shared GPU |
 
 **Recommended order:** 2B and 2A-1 first (both start now, ≈19 h) → gate → 2A-2/2A-3 if it passes → freeze v2 → 2C. Phase 3 (K-NAFNet, §12.9) starts after 2C-5 and is not implemented yet.
+
+## 5. Results log
+
+- **2026-11-15, 2A-1 learning curve:** NAFNet test PSNR (σ > 0) on P1 is 27.53 / 27.55 / 27.48 dB with 50 / 100 / 200 images; P2 drop −2.91 / −2.96 / −2.76 dB. The curve is flat, so the synthetic-data gate is **closed**; 2C uses real images only. DIV2K stays as a control once the download finishes (the ETH server sends about 22 KB/s).
+- **2026-11-15, 2B M3 on v1:** USRNet 27.70 / 27.35 / 25.61 dB on P1 / P2-interp / P2-extrap, +0.27 / +0.27 / +0.24 dB over ADMM-EPLL (Holm p < 10⁻³⁰), P2 drop −0.43 dB (ADMM-EPLL −0.41, NAFNet −2.76). ISTA-Net 25.92 / 25.63 / 23.98; LISTA 23.99 / 23.79 / 22.75. Numbers: `scripts/analyze_phase2.py` → `report/generated/phase2.json`.
+- **v2 frozen without real kernels** (`artifacts/protocol/v2`, 2026-11-15).
+- **Queues:** `checkpoints/logs/phase2b_queue.sh` (M3 LPIPS, H3 with USRNet), then `phase2c_queue.sh` (2C-7 white-box M2, v2 training of all five networks, v2 M1/M3 test grids, 2C-3, 2C-5).

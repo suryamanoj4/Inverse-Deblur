@@ -23,6 +23,8 @@ const OUT = path.join(ROOT, "report", "mid_evaluation.pptx");
 const numbers = JSON.parse(fs.readFileSync(path.join(GEN, "numbers.json")));
 const h3lpips = JSON.parse(fs.readFileSync(path.join(GEN, "h3_lpips.json")));
 const texture = JSON.parse(fs.readFileSync(path.join(GEN, "texture.json"))).sets;
+// Phase 2 numbers (learning curve, M3 on v1) from scripts/analyze_phase2.py.
+const phase2 = JSON.parse(fs.readFileSync(path.join(GEN, "phase2.json")));
 
 // ---- theme ---------------------------------------------------------------
 // Ink and slate dominate; rust marks M1 (data-only), teal M2 (physics-aware),
@@ -142,6 +144,7 @@ function content(title, section) {
 }
 
 const f2 = (v) => v.toFixed(2);
+const SETS = ["P1", "P2_interp", "P2_extrap"];
 
 const METHOD_LABEL = { wiener: "Wiener", rl: "R–L", fista: "FISTA-TV", epll: "ADMM-EPLL", unet: "U-Net", nafnet: "NAFNet" };
 // One colour per method across every chart: grays for untuned baselines, teal shades for M2, rust shades for M1.
@@ -165,7 +168,7 @@ async function build() {
   let s = pres.addSlide({ masterName: "TITLE_DARK", sectionTitle: "Introduction" });
   s.addText("Should a deblurring model know the physics?", { placeholder: "title" });
   s.addText([
-    { text: "Classical vs. modern inverse-function learning · Mid evaluation", options: { breakLine: true } },
+    { text: "Classical vs. modern inverse-function learning · Mid evaluation · updated with Phase 2 results", options: { breakLine: true } },
     { text: "Surya Manoj Pentakota (2026701036) · Kevin Paul Reddy Janagari (2026900006) · IIIT Hyderabad",
       options: { fontSize: 15, color: C.accent4 } },
   ], { placeholder: "body" });
@@ -821,6 +824,72 @@ async function build() {
   s.addNotes("Kernel mismatch is the solid, headline result. The noise and texture parts of H1 and all of H2 did not hold for M1 versus M2. " +
     "H3 holds from sigma 5 up under a transfer attack. These are honest negative results, and M3 will test the hypotheses as originally stated.");
 
+
+  // 15b. Phase 2: learning curve ------------------------------------------
+  pres.addSection({ title: "Phase 2 results" });
+  s = content("Reviewer check: NAFNet is not data-hungry", "Phase 2 results");
+  {
+    const pm = phase2.mean;
+    const runs = [["nafnet_real50", "50 images"], ["nafnet_real100", "100 images"], ["nafnet", "200 images (Phase 1)"]];
+    text(s, "NAFNet test PSNR by number of training images (mean σ > 0)", { x: 0.6, y: 1.4, w: 7.6, h: 0.4, fontSize: 15, bold: true });
+    s.addChart(pres.charts.BAR, runs.map(([key, name]) => ({
+      name, labels: ["P1 (training)", "P2-interp", "P2-extrap"], values: SETS.map((set) => +pm[key][set].toFixed(2)),
+    })), {
+      x: 0.6, y: 1.8, w: 7.6, h: 4.9, barDir: "col", barGrouping: "clustered", barGapWidthPct: 60,
+      chartColors: ["F2C9BE", "E3A08F", M1], showValue: true, dataLabelPosition: "outEnd", dataLabelFormatCode: "0.0",
+      showLegend: true, legendPos: "b", valAxisMinVal: 20, valAxisMaxVal: 29, showValAxisTitle: true,
+      valAxisTitle: "PSNR (dB)", showTitle: false, ...CHART_TEXT,
+    });
+    const spread = Math.max(...runs.map(([k]) => pm[k].P1)) - Math.min(...runs.map(([k]) => pm[k].P1));
+    const stat = [
+      [`${f2(spread)} dB`, "P1 spread across 50, 100 and 200 images: 4× the data changes nothing", M1],
+      [`${f2(pm.nafnet.p2_drop)} dB`, `P2 drop at 200 images; ${f2(pm.nafnet_real50.p2_drop)} at 50. Mismatch, not data`, M1],
+      ["Gate: closed", "Flat curve: synthetic data not justified (DIV2K control pending)", AMBER],
+    ];
+    for (let i = 0; i < 3; i++) {
+      const y = 1.5 + i * 1.75;
+      card(s, 8.55, y, 4.15, 1.5, { name: `curve stat ${i + 1}` });
+      text(s, stat[i][0], { x: 8.8, y: y + 0.15, w: 3.7, h: 0.6, fontSize: 28, bold: true, color: stat[i][2], fontFace: THEME.headFontFace });
+      text(s, stat[i][1], { x: 8.8, y: y + 0.78, w: 3.7, h: 0.65, fontSize: 13, color: C.text2 });
+    }
+  }
+  s.addNotes("The reviewer suggested NAFNet was data-hungry. We retrained it on nested subsets of 50 and 100 of the 200 training images, " +
+    "same protocol and iterations. Test PSNR moves by less than 0.1 dB on the training kernels and the unseen-kernel drop is the same. " +
+    "More data of the same kind does not help, so the go/no-go gate for generating synthetic images is closed; the DIV2K control run will confirm it.");
+
+  // 15c. Phase 2: M3 --------------------------------------------------------
+  s = content("USRNet (M3): best accuracy, M2's robustness", "Phase 2 results");
+  {
+    const pg = phase2.gain;
+    const series = [["NAFNet (M1)", "nafnet", M1], ["ADMM-EPLL (M2)", "epll", M2], ["USRNet (M3)", "usrnet", M3],
+      ["ISTA-Net (M3)", "ista_net", "A88BC0"], ["LISTA (M3)", "lista", "D3C4E0"]];
+    text(s, "Gain over blurred input (dB, mean σ > 0)", { x: 0.6, y: 1.4, w: 7.6, h: 0.4, fontSize: 15, bold: true });
+    s.addChart(pres.charts.BAR, series.map(([name, key]) => ({
+      name, labels: ["P1 (training)", "P2-interp", "P2-extrap"], values: SETS.map((set) => +pg[key][set].toFixed(2)),
+    })), {
+      x: 0.6, y: 1.8, w: 7.6, h: 4.9, barDir: "col", barGrouping: "clustered", barGapWidthPct: 50,
+      chartColors: series.map((x) => x[2]), showValue: true, dataLabelPosition: "outEnd", dataLabelFormatCode: "0.0",
+      showLegend: true, legendPos: "b", valAxisMinVal: 0, valAxisMaxVal: 6, showTitle: false, ...CHART_TEXT,
+      dataLabelFontSize: 9,
+    });
+    const t = phase2.tests, pm = phase2.mean;
+    const stat = [
+      [`+${f2(t["usrnet-epll/P1"].mean_diff_db)} dB`, `USRNet over ADMM-EPLL on P1; +${f2(t["usrnet-epll/P2_interp"].mean_diff_db)} / +${f2(t["usrnet-epll/P2_extrap"].mean_diff_db)} on P2 (Holm p < 10⁻³⁰)`, M3],
+      [`${f2(pm.usrnet.p2_drop)} dB`, `USRNet P2 drop, like ADMM-EPLL (${f2(pm.epll.p2_drop)}); NAFNet ${f2(pm.nafnet.p2_drop)}`, M3],
+      ["Prior matters", "ISTA-Net and LISTA are robust but weaker: light priors lose to the GMM", AMBER],
+    ];
+    for (let i = 0; i < 3; i++) {
+      const y = 1.5 + i * 1.75;
+      card(s, 8.55, y, 4.15, 1.5, { name: `m3 stat ${i + 1}` });
+      text(s, stat[i][0], { x: 8.8, y: y + 0.15, w: 3.7, h: 0.6, fontSize: 28, bold: true, color: stat[i][2], fontFace: THEME.headFontFace });
+      text(s, stat[i][1], { x: 8.8, y: y + 0.78, w: 3.7, h: 0.65, fontSize: 13, color: C.text2 });
+    }
+  }
+  s.addNotes("The three unrolled networks were fixed, trained on the same 200 images and kernels, and evaluated on the same 27,000 cells. " +
+    "USRNet is the best method overall: about a quarter of a dB above ADMM-EPLL on every kernel set, and its drop on unseen kernels is the " +
+    "same small drop as the classical solver, not NAFNet's 2.8 dB. Using the kernel inside the network is what transfers. ISTA-Net and LISTA " +
+    "also keep their accuracy on unseen kernels, but their small learned priors are weaker in absolute terms.");
+
   // 16. Challenges ---------------------------------------------------------
   pres.addSection({ title: "Challenges" });
   s = content("Challenges and how we addressed them", "Challenges");
@@ -830,7 +899,7 @@ async function build() {
     [fa.FaExclamationTriangle, "σ = 0 inverse crime", "Same operator for data and inversion → Wiener 100 dB. 8-bit check: 12.6 dB. σ = 0 excluded from claims.", AMBER],
     [fa.FaRulerHorizontal, "λ optimum at grid edge", "Initial ¼–4× grid too narrow. Widened to 2⁻⁵–2⁴; all optima for σ > 0 now inside.", AMBER],
     [fa.FaServer, "Shared, busy hardware", "GPU and 6 physical cores shared. One GPU job at a time, lowest priority, wait for free memory.", HEX.dk2],
-    [fa.FaWrench, "M3 bugs (open)", "USRNet pads to ×4 but needs ×8, and returns the wrong output; ISTA-Net/LISTA start far below the blurred input.", M1],
+    [fa.FaWrench, "M3 bugs (fixed)", "USRNet now pads to ×8 and returns the prior output; ISTA-Net/LISTA phases are residual and start as gradient steps.", M3],
   ];
   for (let i = 0; i < ch.length; i++) {
     const col = i % 3, row = Math.floor(i / 3);
@@ -842,16 +911,16 @@ async function build() {
   }
   s.addNotes("The EPLL bug was the most important: with the original schedule the solver hardly moved away from the blurred image. " +
     "The GPU port turned a multi-day CPU job into about a day. The noiseless condition turned out to be an inverse crime, which we " +
-    "demonstrated with quantization and excluded. M3's bugs were found by smoke tests before any long run was wasted.");
+    "demonstrated with quantization and excluded. M3's bugs were found by smoke tests before any long run was wasted, and are now fixed.");
 
   // 17. Remaining work + plan ----------------------------------------------
   pres.addSection({ title: "Next steps" });
   s = content("Remaining work and plan to the final evaluation", "Next steps");
   const phases = [
-    ["Days 1–2", "Fix and train M3", "USRNet padding and output; skip connections for ISTA-Net/LISTA; fix 3 tests; train all three (6⁠–⁠12 h GPU)", M3],
-    ["Day 3", "Evaluate all arms", "Full test set, paired tests, mismatch, texture, LPIPS, qualitative; H3 with M3", M2],
-    ["Days 4–5", "Robustness", "White-box attack on M2; σ = 0 protocol fix (quantized observations); 2 more NAFNet seeds", AMBER],
-    ["Days 6–7", "Write-up", "Final report and presentation with the completed scorecard", M1],
+    ["Done", "M3 + data curve", "M3 fixed, trained, evaluated on v1; NAFNet on 50/100 images; LPIPS and H3 with M3 running", M3],
+    ["Next", "Data control", "Flat curve closes the synthetic-data gate; NAFNet + DIV2K run as a control once downloaded", AMBER],
+    ["Queued, ≈ 3–4 GPU-days", "Protocol v2", "58 test kernels in 6 families, family-balanced training, 8-bit observations; all arms retrained", M2],
+    ["Last", "Attacks, report", "White-box attack on M2, H3 on v2, LPIPS; final report and scorecard", M1],
   ];
   s.addShape(pres.shapes.LINE, { x: 1.0, y: 2.35, w: 11.3, h: 0, line: { color: "C9CFD8", width: 2 } });
   for (let i = 0; i < 4; i++) {
@@ -866,16 +935,17 @@ async function build() {
     text(s, phases[i][2], { x: x + 0.25, y: 3.6, w: 2.4, h: 1.9, fontSize: 13, color: C.text2 });
   }
   card(s, 0.6, 5.9, 12.1, 0.8, { fill: C.background1, line: "D5DAE1", shadow: false, name: "stretch note" });
-  text(s, "Optional, time permitting: family-balanced kernel sampling for M1 · LPIPS on the full test set · GoPro real blur · DeepDeblur, K‑SVD",
+  text(s, "Phase 3, after v2: K-NAFNet (kernel-conditioned NAFNet) · optional: GoPro real blur · real measured kernels in P2-extrap",
     { x: 0.85, y: 6.0, w: 11.6, h: 0.6, fontSize: 13, color: C.text2, valign: "middle" });
-  s.addNotes("M3 is the critical path: fix two bugs, add skip connections so training starts from the identity, then train. " +
-    "Because the evaluator and analysis scripts already exist, M3 drops into every table. Robustness work and the write-up follow.");
+  s.addNotes("M3 and the learning curve are done. The flat learning curve closes the synthetic-data gate; DIV2K remains a control run. " +
+    "Then protocol v2 answers the reviewer's request for more kernel variety: six kernel families, all arms retrained on the same data. " +
+    "Robustness experiments and the write-up follow; the kernel-conditioned NAFNet comes after v2.");
 
   // 18. Expected outcomes --------------------------------------------------
   s = content("Expected outcomes for the final evaluation", "Next steps");
   const outcomes = [
     [fa.FaColumns, "A complete three-arm comparison", "PSNR, SSIM, LPIPS, consistency, mismatch and stability for M1, M2, M3 on identical observations, with paired statistics", M2],
-    [fa.FaLayerGroup, "M3 combines M1's prior with M2's robustness", "Expect a P2 drop close to M2's (≈ −0.35 dB, not −2.9 dB) and P1 accuracy at or above NAFNet. If M3 degrades like M1, the learned prior overrides the physics", M3],
+    [fa.FaLayerGroup, "M3 combines M1's prior with M2's robustness", "Confirmed on v1 for USRNet: P2 drop " + f2(phase2.mean.usrnet.p2_drop) + " dB (NAFNet " + f2(phase2.mean.nafnet.p2_drop) + ") and the best P1 accuracy; v2 tests it on six kernel families", M3],
     [fa.FaShieldAlt, "A fuller stability test", "M3 more stable than M1 under transfer attack; white-box M2 attack shows whether M2's advantage survives its own worst case", AMBER],
     [fa.FaLightbulb, "A diagnosis for a follow-up method", "Physics-aware network with a locally adaptive prior (GMM-routed experts or spatially varying λ)", M1],
   ];
