@@ -312,10 +312,10 @@ freezes the v2 kernels.
   separate "more data" from synthetic-domain effects; train and validation
   PSNR are logged per checkpoint, with validation reported on the σ > 0 cells.
 - **More kernel variety (protocol v2).** Seven families instead of three:
-  isotropic and anisotropic Gaussian, linear motion and random-trajectory camera
-  shake for training (≈400 kernels instead of 12); defocus, real recorded
-  camera-shake kernels (Levin, Sun, Köhler) and Airy/Moffat profiles as unseen
-  families. Observations are quantized to 8 bits, which removes the σ = 0
+  round and elliptical Gaussian, linear motion and curved camera shake for
+  training (218 kernels instead of 12); defocus discs, rings and ghost (double)
+  images as unseen families. No family is a special case or near copy of
+  another (cross-family correlation ≤ 0.90, checked when the sets are built). Observations are quantized to 8 bits, which removes the σ = 0
   inverse crime.
 - **M3.** Fix USRNet (padding, output) and ISTA-Net/LISTA (skip connections),
   then train and evaluate all three.

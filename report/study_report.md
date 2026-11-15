@@ -692,7 +692,7 @@ The reviewer suggested that (1) M1 may be data-hungry or overfit, and (2) three 
 1. **Fix and train M3** (USRNet padding and output; skip connections for ISTA-Net/LISTA; then USRNet, ISTA-Net, LISTA) and add it to every table. This is the missing control that separates physics-awareness from prior depth.
 2. **Test data-hunger directly:** NAFNet trained on 50 / 100 / 200 real images, logging train and validation PSNR per checkpoint (train loss converted to PSNR) and reporting validation on the σ > 0 cells so it is comparable with test. This also settles whether the v1 model was under-trained: its best checkpoint was at 98k of 100k iterations.
 3. **Expand the training data for all arms identically:** ~2,000 synthetic images from a pretrained latent-diffusion model, after sharpness, statistics and BSDS val/test leakage checks, mixed 50/50 with the real images. NAFNet, U-Net, the EPLL GMM prior and the M3 networks all use the same mixture; val/test stay real. Controls: synthetic-only NAFNet and real + DIV2K NAFNet.
-4. **Protocol v2 with more kernel variety:** seven families (isotropic and anisotropic Gaussian, linear motion, random-trajectory camera shake for training; defocus, real recorded camera shake, Airy/Moffat as unseen families) and 8-bit quantized observations. Re-run the three-arm comparison, H2, H3 and LPIPS on v2.
+4. **Protocol v2 with more kernel variety:** seven families, none a special case or near copy of another (round and elliptical Gaussian, linear motion, curved camera shake for training; defocus disc, ring and ghost double image as unseen families) and 8-bit quantized observations. Re-run the three-arm comparison, H2, H3 and LPIPS on v2.
 5. **Hypotheses and endpoints added for Phase 2:** H4 (more data helps the deep arms in distribution but not under mismatch) and H5 (more training kernel families narrow M1's gap on unseen parameters but not on unseen families), with pre-registered endpoints E1, E2, E2b and E3.
 6. **Coverage ablation (2C-5).** Train NAFNet on the v2 dense/continuous $P_1$ pool and evaluate it on the **frozen v1 $P_2$-interp and $P_2$-extrap** sets (endpoint E2b). This is the direct test of whether kernel coverage alone fixes the original mismatch (the earlier "M1-dense" idea); if it does, the cheaper fix is preferred over a new architecture.
 7. **Prior and noise ablations on v2 (2C-6).** Re-run the GMM $K$-sweep and the five per-σ specialists, so the prior-depth and noise conclusions are not tied to v1.
@@ -775,7 +775,7 @@ The headline table has four rows — **M1-v2, M2, M3-v2, K-NAFNet** — on $P_1$
 | **P5** | The deep prior fixes M2's texture deficit without hallucination | Positive K-NAFNet−EPLL on high-texture images | Inherits M1's texture behaviour |
 | **P6** | The condition is actually used | Wrong kernel hurts more than the true kernel; zeroing $e_k$ hurts $P_2$ but not $P_1$ | No difference |
 
-P3 is the honest stress test: a kernel encoder sees shape, not a family label, so it may transfer to defocus, real and Airy/Moffat kernels; if it does not, unseen families need explicit iteration (M3) or a broader prior, and that is a negative result worth reporting.
+P3 is the honest stress test: a kernel encoder sees shape, not a family label, so it may transfer to defocus, ring and ghost kernels; if it does not, unseen families need explicit iteration (M3) or a broader prior, and that is a negative result worth reporting.
 
 ### 12.4 Decision gate and budget
 

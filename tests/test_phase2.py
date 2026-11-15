@@ -24,8 +24,13 @@ from deblur.psf import (
     anisotropic_gaussian_kernel,
     fit_support,
     gaussian_kernel,
+    ghost_kernel,
+    kernel_axes,
+    max_cross_family_correlation,
     moffat_kernel,
+    motion_kernel,
     protocol_psf_sets,
+    ring_kernel,
     trajectory_kernel,
 )
 
@@ -60,17 +65,29 @@ class TestProtocolVersions(unittest.TestCase):
         sets = protocol_psf_sets("v2")
         self.assertEqual(len(sets["P1"]), 24)
         self.assertEqual(len(sets["P2_interp"]), 24)
-        self.assertGreaterEqual(len(sets["P1_pool"]), 280)
+        self.assertEqual(len(sets["P1_pool"]), 218)
         pool = {psf.name for psf in sets["P1_pool"]}
         self.assertTrue({psf.name for psf in sets["P1"]} <= pool)
         held_out = [psf.name for psf in sets["P2_interp"] + sets["P2_extrap"]]
         self.assertFalse(set(held_out) & pool)
-        self.assertEqual({psf.kind for psf in sets["P2_extrap"]}, {"defocus", "airy", "moffat"})
+        self.assertEqual({psf.kind for psf in sets["P2_extrap"]}, {"defocus", "ring", "ghost"})
         for psf in (p for kernels in sets.values() for p in kernels):
             self.assertAlmostEqual(psf.kernel.sum(), 1.0, places=10)
             self.assertLessEqual(max(psf.kernel.shape), 31)
             self.assertTrue(np.all(psf.kernel >= 0))
         self.assertEqual(psf_sets_digest(sets), psf_sets_digest(protocol_psf_sets("v2")))
+
+    def test_v2_families_are_distinct(self):
+        sets = protocol_psf_sets("v2")
+        kernels = sets["P1_pool"] + sets["P2_interp"] + sets["P2_extrap"]
+        self.assertLessEqual(max_cross_family_correlation(kernels)[0], 0.90)
+        straight = max(kernel_axes(p.kernel)[0] for p in kernels if p.kind == "motion")
+        curved = min(kernel_axes(p.kernel)[0] for p in kernels if p.kind == "shake")
+        self.assertGreater(curved, 1.5 * straight)  # no shake path is a straight line
+        for psf in kernels:
+            if psf.kind == "aniso_gaussian":
+                minor, major = kernel_axes(psf.kernel)
+                self.assertGreater(major, 2.5 * minor)  # never close to round
 
     def test_v2_interp_angles_are_between_training_angles(self):
         sets = protocol_psf_sets("v2")
@@ -122,6 +139,29 @@ class TestKernelGenerators(unittest.TestCase):
         self.assertAlmostEqual(a.sum(), 1.0)
         with self.assertRaises(ValueError):
             trajectory_kernel(17, 0.0, seed=0)
+
+    def test_ring_and_ghost(self):
+        r = ring_kernel(6, 3.6)
+        c = r.shape[0] // 2
+        self.assertEqual(r[c, c], 0.0)  # a hole, unlike a disc
+        self.assertAlmostEqual(r.sum(), 1.0)
+        g = ghost_kernel(10, 0.0, weight=0.7)
+        self.assertAlmostEqual(g.sum(), 1.0)
+        row = g[g.shape[0] // 2]
+        self.assertAlmostEqual(row.max(), 0.7)
+        self.assertEqual(int(np.count_nonzero(row)), 2)  # two separate points
+        with self.assertRaises(ValueError):
+            ring_kernel(3, 3)
+
+    def test_cross_family_correlation(self):
+        from deblur.psf import PSF
+
+        line = motion_kernel(9, 30.0)
+        shifted = np.pad(line, ((0, 4), (3, 0)))
+        same = [PSF(name="a", kernel=line, kind="x"), PSF(name="b", kernel=shifted, kind="y")]
+        self.assertAlmostEqual(max_cross_family_correlation(same)[0], 1.0, places=6)
+        different = [PSF(name="a", kernel=line, kind="x"), PSF(name="c", kernel=ring_kernel(6, 3.6), kind="y")]
+        self.assertLess(max_cross_family_correlation(different)[0], 0.7)
 
     def test_airy_and_moffat(self):
         k = airy_kernel(3.0)

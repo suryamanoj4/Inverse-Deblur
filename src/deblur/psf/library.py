@@ -220,6 +220,58 @@ def moffat_kernel(alpha: float, beta: float, size: int | None = None) -> np.ndar
     return _normalise((1.0 + (xx**2 + yy**2) / alpha**2) ** (-beta))
 
 
+def ring_kernel(outer: float, inner: float, size: int | None = None, supersample: int = 8) -> np.ndarray:
+    """Anti-aliased annulus (mirror-lens / catadioptric defocus), unit mass."""
+    if not 0 < inner < outer:
+        raise ValueError("need 0 < inner < outer")
+    if size is None:
+        size = 2 * int(np.ceil(outer)) + 1
+    if size % 2 == 0:
+        size += 1
+    n = size * supersample
+    coords = (np.arange(n, dtype=np.float64) + 0.5) / supersample - size / 2.0
+    xx, yy = np.meshgrid(coords, coords, indexing="xy")
+    r2 = xx**2 + yy**2
+    mask = (r2 <= outer**2) & (r2 >= inner**2)
+    blocks = mask.reshape(size, supersample, size, supersample).mean(axis=(1, 3))
+    return _normalise(blocks)
+
+
+def ghost_kernel(separation: float, angle_deg: float, weight: float = 0.65) -> np.ndarray:
+    """Double image (ghosting / double exposure): two points ``separation`` px apart.
+
+    The main point carries ``weight`` of the mass, the ghost the rest; both are
+    placed symmetrically about the centre with bilinear splatting.
+    """
+    if separation <= 0 or not 0.5 <= weight < 1.0:
+        raise ValueError("separation must be positive and weight in [0.5, 1)")
+    size = 2 * int(np.ceil(separation / 2.0)) + 3
+    centre = (size - 1) / 2.0
+    theta = np.deg2rad(angle_deg)
+    kernel = np.zeros((size, size))
+    for sign, w in ((-1.0, weight), (1.0, 1.0 - weight)):
+        x = centre + sign * separation / 2.0 * np.cos(theta)
+        y = centre + sign * separation / 2.0 * np.sin(theta)
+        x0, y0 = int(np.floor(x)), int(np.floor(y))
+        fx, fy = x - x0, y - y0
+        kernel[y0, x0] += w * (1 - fx) * (1 - fy)
+        kernel[y0, x0 + 1] += w * fx * (1 - fy)
+        kernel[y0 + 1, x0] += w * (1 - fx) * fy
+        kernel[y0 + 1, x0 + 1] += w * fx * fy
+    return _normalise(kernel)
+
+
+def kernel_axes(kernel: np.ndarray) -> tuple[float, float]:
+    """Standard deviations (minor, major) of the kernel mass along its principal axes."""
+    k = kernel / kernel.sum()
+    y, x = np.indices(k.shape, dtype=np.float64)
+    mx, my = (k * x).sum(), (k * y).sum()
+    dx, dy = x - mx, y - my
+    cov = np.array([[(k * dx * dx).sum(), (k * dx * dy).sum()], [(k * dx * dy).sum(), (k * dy * dy).sum()]])
+    minor, major = np.sqrt(np.clip(np.linalg.eigvalsh(cov), 0.0, None))
+    return float(minor), float(major)
+
+
 def fit_support(kernel: np.ndarray, max_size: int, threshold: float = 1e-3) -> np.ndarray:
     """Crop ``kernel`` to its centred support and cap it at ``max_size`` x ``max_size``.
 
@@ -410,18 +462,36 @@ def _v2_psf(name: str, kernel: np.ndarray, kind: str) -> PSF:
     return PSF(name=name, kernel=fit_support(kernel, V2_MAX_KERNEL_SIZE), kind=kind)
 
 
+# Family separation margins for v2 (no family is a special or limiting case of another):
+V2_ELLIPSES = ((3.6, 1.2), (4.2, 1.2), (4.8, 1.2), (4.5, 1.5))  # (sigma_x, sigma_y): aspect >= 3, sigma_y >= 1.2
+V2_MAX_CROSS_FAMILY_CORR = 0.90  # best-shift normalised correlation between kernels of different families
+V2_MIN_SHAKE_MINOR_STD = 1.2  # shake paths: cross-axis spread >= 1.2 px (straight lines: <= 0.61 px)
+V2_RING_INNER_RATIO = 0.6  # rings: inner radius = 0.6 x outer, a clear hole (never a disc)
+
+
+def _shake_family(intensities, count: int, seed_start: int) -> list[PSF]:
+    """``count`` curved shake kernels per intensity; near-straight paths are rejected."""
+    out, seed = [], seed_start
+    for i in intensities:
+        accepted = 0
+        while accepted < count:
+            kernel = trajectory_kernel(_shake_extent(seed), i, seed)
+            if kernel_axes(kernel)[0] >= V2_MIN_SHAKE_MINOR_STD:
+                out.append(_v2_psf(f"shake_i{i:g}_s{seed}", kernel, "shake"))
+                accepted += 1
+            seed += 1
+    return out
+
+
 def _v2_family_pools() -> dict[str, list[PSF]]:
     """Protocol v2 training pool, by family (training grids only)."""
     gaussian = [
         _v2_psf(f"gaussian_sigma{s:g}", gaussian_kernel(s), "gaussian")
         for s in np.round(np.arange(0.6, 2.41, 0.2), 1)
     ]
-    widths = (0.6, 1.2, 1.8, 2.4, 3.0)
     aniso = [
         _v2_psf(f"aniso_sx{sx:g}_sy{sy:g}_a{a:g}", anisotropic_gaussian_kernel(sx, sy, a), "aniso_gaussian")
-        for sx in widths
-        for sy in widths
-        if sx > sy
+        for sx, sy in V2_ELLIPSES
         for a in range(0, 180, 15)
     ]
     motion = [
@@ -429,15 +499,7 @@ def _v2_family_pools() -> dict[str, list[PSF]]:
         for l in (5, 9, 13, 17, 21)
         for a in range(0, 180, 15)
     ]
-    shake = [
-        _v2_psf(
-            f"shake_i{i:g}_s{seed}",
-            trajectory_kernel(_shake_extent(seed), i, seed),
-            "shake",
-        )
-        for i in (0.2, 0.4, 0.6, 0.8, 1.0)
-        for seed in range(20)
-    ]
+    shake = _shake_family((0.2, 0.4, 0.6, 0.8, 1.0), count=20, seed_start=0)
     return {"gaussian": gaussian, "aniso_gaussian": aniso, "motion": motion, "shake": shake}
 
 
@@ -450,18 +512,28 @@ def protocol_v2_psf_sets(real_kernel_dirs: tuple[tuple[str, str], ...] = ()) -> 
     """Protocol v2 kernel sets (expanded families; see the spec, section 12.3).
 
     - ``P1_pool`` (training, about 290 kernels): isotropic Gaussian (0.2 grid in
-      [0.6, 2.4]), anisotropic Gaussian (widths {0.6,...,3.0}, 15-degree
-      angles), linear motion (lengths {5,9,13,17,21}, 15-degree angles) and
-      random-trajectory shake (intensities {0.2,...,1.0}, seeds 0-19).
+      [0.6, 2.4]), elliptical Gaussian (``V2_ELLIPSES``, 15-degree angles),
+      linear motion (lengths {5,9,13,17,21},
+      15-degree angles) and curved random-trajectory shake (intensities
+      {0.2,...,1.0}, 20 accepted seeds each; near-straight paths rejected).
     - ``P1`` (in-distribution test, 24): 6 kernels per family from the pool.
     - ``P2_interp`` (24): the same families between the training grid points
       (7.5-degree angle offsets, intermediate widths/lengths/intensities,
       held-out trajectory seeds).
-    - ``P2_extrap``: unseen families: defocus disks, Airy, Moffat and any real
+    - ``P2_extrap``: unseen families: defocus disks, rings, ghosts and any real
       recorded kernels found in ``real_kernel_dirs`` (``(prefix, directory)``
       pairs, e.g. ``(("levin", "data/levin"),)``).
 
     Every kernel is cropped to its support and capped at 31 x 31.
+
+    No family is a special or limiting case of another, and none is a near
+    copy: elliptical Gaussians have aspect >= 3 and sigma_y >= 1.2 (thinner
+    ones are motion lines, rounder ones round Gaussians), shake paths must be
+    curved (``V2_MIN_SHAKE_MINOR_STD``), rings have a hole, ghosts are two
+    separated points, and the smallest defocus disc (radius 3) is left out.
+    Moffat (beta -> infinity gives a Gaussian) and Airy (its faint rings leave
+    a Gaussian, correlation 0.99) are not used. The construction checks that
+    every cross-family pair stays at or below ``V2_MAX_CROSS_FAMILY_CORR``.
     """
     pools = _v2_family_pools()
     p1_pool = [psf for family in pools.values() for psf in family]
@@ -473,23 +545,22 @@ def protocol_v2_psf_sets(real_kernel_dirs: tuple[tuple[str, str], ...] = ()) -> 
     ]
     interp += [
         _v2_psf(f"aniso_sx{sx:g}_sy{sy:g}_a{a:g}", anisotropic_gaussian_kernel(sx, sy, a), "aniso_gaussian")
-        for sx, sy, a in ((1.5, 0.9, 7.5), (2.1, 0.9, 52.5), (2.7, 1.5, 97.5), (2.1, 1.5, 142.5),
-                          (2.7, 0.9, 22.5), (1.5, 0.9, 112.5))
+        for sx, sy, a in ((3.9, 1.2, 7.5), (4.5, 1.2, 52.5), (4.2, 1.35, 97.5), (3.9, 1.2, 142.5),
+                          (4.5, 1.2, 22.5), (4.2, 1.35, 112.5))
     ]
     interp += [
         _v2_psf(f"motion_l{l:g}_a{a:g}", motion_kernel(l, a, thickness=1.5), "motion")
         for l, a in ((7, 7.5), (11, 37.5), (15, 67.5), (19, 97.5), (11, 127.5), (15, 157.5))
     ]
-    interp += [
-        _v2_psf(f"shake_i{i:g}_s{seed}", trajectory_kernel(_shake_extent(seed), i, seed), "shake")
-        for i, seed in ((0.3, 100), (0.5, 101), (0.7, 102), (0.9, 103), (0.5, 104), (0.7, 105))
-    ]
+    interp += _shake_family((0.3, 0.5, 0.7, 0.9, 0.5, 0.7), count=1, seed_start=1_000_000)  # far from pool seeds
 
-    extrap = [_v2_psf(f"defocus_r{r:g}", disk_kernel(r), "defocus") for r in (3, 5, 7, 9)]
-    extrap += [_v2_psf(f"airy_r{r:g}", airy_kernel(r), "airy") for r in (2, 3, 4)]
+    extrap = [_v2_psf(f"defocus_r{r:g}", disk_kernel(r), "defocus") for r in (5, 7, 9, 11)]
     extrap += [
-        _v2_psf(f"moffat_a{a:g}_b{b:g}", moffat_kernel(a, b), "moffat")
-        for a, b in ((1.5, 2.5), (2.5, 3.0), (3.5, 4.0))
+        _v2_psf(f"ring_r{r:g}", ring_kernel(r, V2_RING_INNER_RATIO * r), "ring") for r in (4, 6, 8, 10)
+    ]
+    extrap += [
+        _v2_psf(f"ghost_d{d:g}_a{a:g}", ghost_kernel(d, a), "ghost")
+        for d, a in ((6, 30), (10, 100), (14, 160), (18, 60))
     ]
     for prefix, directory in real_kernel_dirs:
         extrap += load_kernel_dir(directory, kind="real", prefix=f"{prefix}_", max_size=V2_MAX_KERNEL_SIZE)
@@ -500,10 +571,42 @@ def protocol_v2_psf_sets(real_kernel_dirs: tuple[tuple[str, str], ...] = ()) -> 
         raise ValueError("v2 training pool contains duplicate names")
     if not {psf.name for psf in p1} <= pool_names:
         raise ValueError("v2 P1 test kernels must come from the training pool")
+    pool_seeds = {psf.name.rsplit("_s", 1)[1] for psf in p1_pool if psf.kind == "shake"}
+    if any(psf.name.rsplit("_s", 1)[1] in pool_seeds for psf in interp if psf.kind == "shake"):
+        raise ValueError("v2 held-out shake kernels reuse a training trajectory seed")
     held_out = [psf.name for psf in interp + extrap]
     if len(held_out) != len(set(held_out)) or set(held_out) & pool_names:
         raise ValueError("v2 held-out kernels overlap the training pool or each other")
+    corr, a, b = max_cross_family_correlation([psf for psf in p1_pool + interp + extrap if psf.kind != "real"])
+    if corr > V2_MAX_CROSS_FAMILY_CORR:
+        raise ValueError(f"v2 families overlap: {a} ~ {b} (correlation {corr:.3f})")
     return sets
+
+
+def max_cross_family_correlation(psfs: list[PSF], size: int = 64) -> tuple[float, str, str]:
+    """Largest best-shift normalised correlation between two kernels of different kinds.
+
+    1 means the same shape up to a shift; v2 keeps every cross-family pair at or
+    below ``V2_MAX_CROSS_FAMILY_CORR`` so no family is a near copy of another.
+    """
+    spectra = []
+    for psf in psfs:
+        padded = np.zeros((size, size))
+        h, w = psf.kernel.shape
+        padded[:h, :w] = psf.kernel / np.linalg.norm(psf.kernel)
+        spectra.append(np.fft.rfft2(padded))
+    spectra = np.stack(spectra)
+    kinds = np.array([psf.kind for psf in psfs])
+    best = (0.0, "", "")
+    for i in range(len(psfs)):
+        other = np.flatnonzero(kinds[i + 1 :] != kinds[i]) + i + 1
+        if other.size == 0:
+            continue
+        corr = np.fft.irfft2(spectra[other] * np.conj(spectra[i])[None], s=(size, size)).max(axis=(1, 2))
+        j = int(corr.argmax())
+        if corr[j] > best[0]:
+            best = (float(corr[j]), psfs[i].name, psfs[other[j]].name)
+    return best
 
 
 def build_psf_library(

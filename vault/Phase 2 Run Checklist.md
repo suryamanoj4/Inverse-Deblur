@@ -67,7 +67,7 @@ Use the data setting chosen at the gate (real only, or real + `syn-v1`) for **ev
 | [ ] | USRNet / ISTA-Net / LISTA v2 | `scripts/train_m3.py --data-root data --protocol v2 --model …` | ≈1.2 + 0.4 + 0.4 h |
 | [ ] | GMM-200 (v2 uses the same data rule) | as in 2A-2 or the Phase 1 prior | 15 min CPU |
 | [ ] | λ re-tuning on real val for v2 (24 kernels × 5 σ × 10 λ) | `evaluate.py --protocol v2 --split val --subset 10 --psf-sets P1 --lambda-values …` per factor | FISTA-TV ≈5.7 h, ADMM-EPLL ≈2.3 h |
-| [ ] | v2 test grid, M1 and M3 (58 kernels × 5 σ × 200 images) | `evaluate.py --protocol v2 --arm m1|m3 --checkpoint …` | ≈1–2 h per model |
+| [ ] | v2 test grid, M1 and M3 (60 kernels × 5 σ × 200 images) | `evaluate.py --protocol v2 --arm m1|m3 --checkpoint …` | ≈1–2 h per model |
 | [ ] | v2 test grid, ADMM-EPLL (200 images) | `evaluate.py --protocol v2 --arm m2 --method admm_epll --m2-backend torch --stride 1 …` (shard with `--shard i/n`) | ≈10.5 h |
 | [ ] | v2 test grid, FISTA-TV (100-image subset) | `… --method fista_tv --subset 100` | ≈12 h |
 | [ ] | v2 test grid, Wiener and Richardson–Lucy (CPU, shard over cores) | `evaluate.py --protocol v2 --arm m2 --method wiener|richardson_lucy --shard i/6` | ≈1 h + ≈8 h CPU |
@@ -100,5 +100,5 @@ Use the data setting chosen at the gate (real only, or real + `syn-v1`) for **ev
 
 - **2026-11-15, 2A-1 learning curve:** NAFNet test PSNR (σ > 0) on P1 is 27.53 / 27.55 / 27.48 dB with 50 / 100 / 200 images; P2 drop −2.91 / −2.96 / −2.76 dB. The curve is flat, so the synthetic-data gate is **closed**; 2C uses real images only. DIV2K stays as a control once the download finishes (the ETH server sends about 22 KB/s).
 - **2026-11-15, 2B M3 on v1:** USRNet 27.70 / 27.35 / 25.61 dB on P1 / P2-interp / P2-extrap, +0.27 / +0.27 / +0.24 dB over ADMM-EPLL (Holm p < 10⁻³⁰), P2 drop −0.43 dB (ADMM-EPLL −0.41, NAFNet −2.76). ISTA-Net 25.92 / 25.63 / 23.98; LISTA 23.99 / 23.79 / 22.75. Numbers: `scripts/analyze_phase2.py` → `report/generated/phase2.json`.
-- **v2 frozen without real kernels** (`artifacts/protocol/v2`, 2026-11-15).
+- **v2 re-frozen with distinct families** (2026-11-15, before any v2 run): training pool 218 (10 round Gaussian, 48 elliptical, 60 motion, 100 curved shake); test 24 P1 + 24 P2-interp + 12 P2-extrap (defocus, ring, ghost). Airy, Moffat, defocus r3 and thin/near-round ellipses dropped as near copies; max cross-family correlation 0.88. Contact sheet: `report/generated/v2_kernels.png`. No real kernels.
 - **Queues:** `checkpoints/logs/phase2b_queue.sh` (M3 LPIPS, H3 with USRNet), then `phase2c_queue.sh` (2C-7 white-box M2, v2 training of all five networks, v2 M1/M3 test grids, 2C-3, 2C-5).

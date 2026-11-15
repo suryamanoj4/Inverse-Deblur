@@ -588,21 +588,32 @@ no-restoration baseline.
 
 ### 12.3 Kernel variety: protocol v2
 
-v1 has three families: isotropic Gaussian, linear motion and defocus disks. v2 has seven:
+v1 has three families: isotropic Gaussian, linear motion and defocus disks. v2 has seven, chosen so that **no family is a special case, a limiting case or a near copy of another** (rules below the table):
 
 | # | Family | Model and parameters | What it represents | Set |
 |---|---|---|---|---|
 | 1 | Isotropic Gaussian (v1) | $\sigma_k$ on a 0.2 grid in $[0.6, 2.4]$; interp between grid points | Mild optical softness | train / interp |
-| 2 | **Anisotropic Gaussian** | $\sigma_x \ne \sigma_y$ on a grid in $[0.6, 3]$, rotation $\theta$ at multiples of 15°; interp between grid points | Astigmatism, directional softness | train / interp |
+| 2 | **Elliptical Gaussian** | $(\sigma_x,\sigma_y) \in \{(3.6,1.2),(4.2,1.2),(4.8,1.2),(4.5,1.5)\}$ (aspect ≥ 3, $\sigma_y \ge 1.2$), rotation at multiples of 15°; interp at in-between widths and 7.5° offsets | Astigmatism, directional softness | train / interp |
 | 3 | Linear motion (v1) | length $\{5,9,13,17,21\}$ px at multiples of 15°; interp at lengths $\{7,11,15,19\}$ and angles offset by 7.5° | Straight camera or object motion | train / interp |
-| 4 | **Random-trajectory camera shake** | Boracchi & Foi (2012) random-walk trajectories (as used by DeblurGAN); shake intensity on a grid, training seeds; interp at intermediate intensities with held-out seeds | Realistic hand shake, curved paths | train / interp |
-| 5 | Defocus disk (v1) | radius 2–10 px | Out-of-focus lens | **extrap** |
-| 6 | **Real recorded camera shake** | Levin et al. (2009), 8 kernels (loader exists); Sun et al. (2013); Köhler et al. (2012), 12 kernels | Measured real blur, not procedural | **extrap** |
-| 7 | **Diffraction / turbulence** | Airy disk; Moffat profile (heavy tails) | Small apertures, atmospheric blur | **extrap** |
+| 4 | **Curved camera shake** | Boracchi & Foi (2012) random-walk trajectories (as used by DeblurGAN); intensity {0.2,…,1.0} × 20 seeds; near-straight paths rejected; interp at intermediate intensities with seeds far from the training seeds | Realistic hand shake, curved paths | train / interp |
+| 5 | Defocus disk (v1) | radius {5, 7, 9, 11} px | Out-of-focus lens | **extrap** |
+| 6 | **Ring (annulus)** | outer radius {4, 6, 8, 10} px, inner radius 0.6 × outer | Mirror (catadioptric) lens defocus, "donut bokeh" | **extrap** |
+| 7 | **Ghost (double image)** | two points 6–18 px apart at assorted angles, 65 % / 35 % of the light | Double exposure, ghosting, vibration that pauses | **extrap** |
+
+Real recorded camera shake (Levin, Sun, Köhler) can still be added to $P_2$-extrap with `--real-kernels` before v2 is frozen; it is not in the current freeze.
+
+**Distinctness rules (enforced in `protocol_v2_psf_sets`).** A family that contains another as a special or limiting case, or whose kernels are near copies of another family's, would blur the train/unseen split, so:
+
+- Elliptical Gaussians have aspect ≥ 3 and $\sigma_y \ge 1.2$: thinner ones are indistinguishable from short motion lines, rounder ones from round Gaussians (correlation up to 0.97).
+- Shake paths must be curved: cross-axis spread ≥ 1.2 px, twice the widest straight line (0.61 px). Low-intensity shake otherwise produces straight strokes, i.e. linear motion.
+- Rings have a clear hole (inner radius 0.6 × outer), so a ring is never a disc; ghosts are two separated points, so they are never a line or a path.
+- **Dropped:** Airy (its faint rings leave a round Gaussian, correlation 0.99), Moffat (a Gaussian is its β → ∞ limit), the radius-3 defocus disc (0.95 with a Gaussian), and a combined defocus + motion kernel (it contains both families).
+- **Check:** the best-shift normalised correlation between any two kernels of different families is at most 0.90 (`V2_MAX_CROSS_FAMILY_CORR`; the frozen set peaks at 0.88, Gaussian σ = 2.4 vs defocus r = 5). Held-out shake kernels never reuse a training trajectory seed.
+- Tiny kernels of every shape approach a single point, so some similarity at the small end is unavoidable; the cap keeps it below near-copy level.
 
 **Set design.**
 
-- **$P_1$ training pool:** families 1–4 on their *training grids* (table above), about 100 kernels per family, about 400 in total (v1 had 12). The sampler draws one per patch, so the network sees far more kernel variety than in v1.
+- **$P_1$ training pool:** families 1–4 on their *training grids* (table above), 218 kernels in total (v1 had 12). The sampler draws one per patch, so the network sees far more kernel variety than in v1.
 - **$P_1$ test:** 24 kernels taken from the training pool (6 per family), as in v1, where the in-distribution test kernels are the training kernels.
 - **$P_2$-interp:** 24 kernels from families 1–4 with parameters *between* the training grid points (and held-out seeds for trajectories). Same kinds of blur, settings never seen; the same logic as v1.
 - **$P_2$-extrap:** families 5–7: unseen kinds of blur, including real measured kernels. Defocus stays here so v1 and v2 remain comparable.
@@ -664,7 +675,7 @@ All Phase 2 code below is implemented, unit-tested (153 tests) and smoke-tested 
 | Area | Implemented in |
 |---|---|
 | M3 fixes | `unrolled/usrnet.py`: pads to a multiple of 8 and returns the last prior output; `unrolled/ista_net.py`, `unrolled/lista.py`: residual on the gradient step with a zero-initialised last layer, so each phase starts as a plain gradient step; the 3 `assert_close` tests fixed. Smoke runs: USRNet 25.4 dB, ISTA-Net 25.8 dB after 400 iterations (previously a crash and 4.7–12.5 dB) |
-| Kernels | `psf/library.py`: `anisotropic_gaussian_kernel`, `trajectory_kernel` (Boracchi & Foi), `airy_kernel`, `moffat_kernel`, `fit_support` (31×31 cap), `load_kernel_dir` (Levin/Sun/Köhler), `protocol_psf_sets("v2")`. v1 is unchanged and pinned by a SHA-256 test |
+| Kernels | `psf/library.py`: `anisotropic_gaussian_kernel`, `trajectory_kernel` (Boracchi & Foi), `ring_kernel`, `ghost_kernel`, `kernel_axes`, `max_cross_family_correlation` (Airy and Moffat generators kept but unused), `fit_support` (31×31 cap), `load_kernel_dir` (Levin/Sun/Köhler), `protocol_psf_sets("v2")`. v1 is unchanged and pinned by a SHA-256 test |
 | Protocol | `protocol/config.py`: `protocol_version`, per-version defaults, `real_kernel_dirs`, `quantize_observations`, `psf_sets()`, kernel-set digest in the manifest; `protocol/observations.py`: 8-bit quantization |
 | Training data | `data/training_pool.py` (one pool builder and one set of options for `train_m1.py`, `train_m3.py`, `train_gmm.py`: `--train-images`, `--extra-images`, `--p-real`, `--require-manifest`); `data/synthetic.py` (BSDS-size normalisation, manifest-verified loading, nested subsets, QC primitives) |
 | Sampler / trainer | `training/sampler.py`: real/extra mixture, family-balanced kernels, quantized observations (v1 batches bit-identical); `training/trainer.py`: logs train PSNR and validation PSNR on σ > 0 |
@@ -676,9 +687,9 @@ All Phase 2 code below is implemented, unit-tested (153 tests) and smoke-tested 
 
 **Decisions made during implementation** (all recorded in the protocol manifest):
 
-- **v2 training pool: 290 kernels**: 10 isotropic Gaussian, 120 anisotropic, 60 motion, 100 shake. Because the families are unequal in size, v2 samples kernels **family-balanced** (family first, then a kernel). `condition_sampling` records this; v1 stays `uniform_independent`.
+- **v2 training pool: 218 kernels**: 10 round Gaussian, 48 elliptical, 60 motion, 100 curved shake (revised 2026-11-15 for distinctness; the first freeze had 290 with overlapping families). Because the families are unequal in size, v2 samples kernels **family-balanced** (family first, then a kernel). `condition_sampling` records this; v1 stays `uniform_independent`.
 - **Shake intensity** is mapped to an irregularity of at most 0.03. This was calibrated visually against recorded kernels: higher values produce unrealistic scribbles.
-- **$P_1$ test** kernels are a seeded random draw of 6 per family from the pool (spread over angles and widths); **$P_2$-extrap** without downloads is defocus (4) + Airy (3) + Moffat (3), and real kernels are added with `--real-kernels` before v2 is frozen.
+- **$P_1$ test** kernels are a seeded random draw of 6 per family from the pool (spread over angles and widths); **$P_2$-extrap** without downloads is defocus (4) + ring (4) + ghost (4), and real kernels are added with `--real-kernels` before v2 is frozen.
 - **FISTA-TV cost is set by the FFT size, not by batching or precision:** cuFFT is ≈2.5× slower at 481×321 than at 480×320; batching gives ≈1.2× and float32 nothing. The v2 budget therefore keeps FISTA-TV on a 100-image subset.
 - **2C-5 caveat:** the v2 Gaussian training grid contains σ_k = 1.4 and 1.8, two of the three Gaussians in the *v1* $P_2$-interp set; report or exclude them in the frozen-v1 coverage test.
 
@@ -775,7 +786,7 @@ The kernel jitter and the wrong-kernel test in §12.9.5 are the safeguards again
 |---|---|---|---|
 | **P1** | In distribution, conditioning costs nothing | Within 0.2 dB of M1-v2 on v2 $P_1$ | Loses >0.3 dB |
 | **P2** | Kernel conditioning closes the unseen-parameter gap | ≥2 dB above M1 and within 1 dB of M2 on $P_2$-interp | Still >2 dB behind M2 |
-| **P3** | Conditioning transfers to unseen *families* | Beats M1 on $P_2$-extrap (defocus, real, Airy/Moffat) | No gain over M1 |
+| **P3** | Conditioning transfers to unseen *families* | Beats M1 on $P_2$-extrap (defocus, ring, ghost) | No gain over M1 |
 | **P4** | One DC step buys stability | Smaller H3 drop than M1, approaching M2 | H3 drop unchanged |
 | **P5** | A deep prior fixes M2's texture deficit without hallucination | Positive K-NAFNet−EPLL on high-texture images | Inherits M1's texture behaviour |
 | **P6** | The condition is actually used | Wrong kernel at test hurts more than the true kernel; zeroing $e_k$ hurts $P_2$ but not $P_1$ | No difference, i.e. the network ignored $c$ |

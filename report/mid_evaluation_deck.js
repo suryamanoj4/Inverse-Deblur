@@ -919,7 +919,7 @@ async function build() {
   const phases = [
     ["Done", "M3 + data curve", "M3 fixed, trained, evaluated on v1; NAFNet on 50/100 images; LPIPS and H3 with M3 running", M3],
     ["Next", "Data control", "Flat curve closes the synthetic-data gate; NAFNet + DIV2K run as a control once downloaded", AMBER],
-    ["Queued, ≈ 3–4 GPU-days", "Protocol v2", "58 test kernels in 6 families, family-balanced training, 8-bit observations; all arms retrained", M2],
+    ["Queued, ≈ 3–4 GPU-days", "Protocol v2", "60 test kernels in 7 distinct families, family-balanced training, 8-bit observations; all arms retrained", M2],
     ["Last", "Attacks, report", "White-box attack on M2, H3 on v2, LPIPS; final report and scorecard", M1],
   ];
   s.addShape(pres.shapes.LINE, { x: 1.0, y: 2.35, w: 11.3, h: 0, line: { color: "C9CFD8", width: 2 } });
