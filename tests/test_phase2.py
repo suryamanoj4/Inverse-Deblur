@@ -100,8 +100,9 @@ class TestProtocolVersions(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             np.save(Path(tmp) / "k1.npy", trajectory_kernel(15, 0.7, seed=3))
             sets = protocol_psf_sets("v2", real_kernel_dirs=(("levin", tmp),))
-        real = [psf for psf in sets["P2_extrap"] if psf.kind == "real"]
-        self.assertEqual([psf.name for psf in real], ["levin_k1"])
+        self.assertEqual([psf.name for psf in sets["P2_real"]], ["levin_k1"])
+        self.assertFalse(any(psf.kind == "real" for psf in sets["P2_extrap"]))
+        self.assertNotIn("P2_real", protocol_psf_sets("v2"))
 
     def test_config_versions(self):
         v1 = ProtocolConfig(data_root="data")

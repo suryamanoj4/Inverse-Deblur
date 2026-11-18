@@ -231,6 +231,9 @@ def main() -> None:
     parser.add_argument("--arm", required=True, choices=["m1", "m2", "m3"])
     parser.add_argument("--data-root", required=True)
     parser.add_argument("--split", default="test", choices=["train", "val", "test"])
+    parser.add_argument("--image-dir", default=None,
+                        help="evaluate on every image in this directory instead of a BSDS500 split "
+                             "(external benchmarks, e.g. the Levin / Sun ground-truth images)")
     parser.add_argument("--checkpoint", default=None, help="M1/M3 checkpoint")
     parser.add_argument("--method", default="fista_tv", help=f"M2 method: {', '.join(M2_METHODS)}")
     parser.add_argument("--gmm", default=None, help="M2: EPLL prior (.npz)")
@@ -275,8 +278,16 @@ def main() -> None:
         protocol_version=args.protocol,
         real_kernel_dirs=tuple(tuple(item.split("=", 1)) for item in args.real_kernels),
     )
-    dataset = BSDS500(config.data_root, split=args.split, luminance=config.luminance)
-    paths = dataset.paths[: args.limit] if args.limit else dataset.paths
+    if args.image_dir:
+        image_root = Path(args.image_dir)
+        all_paths = sorted(p for p in image_root.iterdir()
+                           if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"})
+        if not all_paths:
+            raise SystemExit(f"no images in {image_root}")
+    else:
+        dataset = BSDS500(config.data_root, split=args.split, luminance=config.luminance)
+        image_root, all_paths = dataset.image_root, dataset.paths
+    paths = all_paths[: args.limit] if args.limit else all_paths
     if args.subset:
         paths = validation_subset(paths, size=args.subset, seed=config.val_subset_seed)
     if args.shard:
@@ -285,7 +296,7 @@ def main() -> None:
             raise SystemExit("--shard needs 0 <= INDEX < COUNT")
         paths = sorted(paths)[index::count]
     images = [
-        (p.relative_to(dataset.image_root).as_posix(), load_image(p, luminance=config.luminance))
+        (p.relative_to(image_root).as_posix(), load_image(p, luminance=config.luminance))
         for p in paths
     ]
 
@@ -368,6 +379,7 @@ def main() -> None:
     metadata = {
         "arm": arm_meta,
         "split": args.split,
+        "image_dir": args.image_dir,
         "limit": args.limit,
         "subset": args.subset,
         "subset_seed": config.val_subset_seed if args.subset else None,

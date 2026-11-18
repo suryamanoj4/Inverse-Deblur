@@ -64,7 +64,7 @@ class ProtocolConfig:
     gaussian_sigmas: tuple[float, ...] = (0.7, 1.2, 1.6, 2.0)
     defocus_radii: tuple[float, ...] = (3.0, 5.0, 7.0, 9.0)
     levin_dir: str | None = None
-    # v2 only: (prefix, directory) pairs of real recorded kernels added to P2_extrap
+    # v2 only: (prefix, directory) pairs of real recorded kernels, evaluated as the separate P2_real set
     real_kernel_dirs: tuple[tuple[str, str], ...] = ()
     # v2 only: round every observation to 8-bit levels after noise and clipping
     quantize_observations: bool | None = None

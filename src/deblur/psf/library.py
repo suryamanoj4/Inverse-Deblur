@@ -520,9 +520,10 @@ def protocol_v2_psf_sets(real_kernel_dirs: tuple[tuple[str, str], ...] = ()) -> 
     - ``P2_interp`` (24): the same families between the training grid points
       (7.5-degree angle offsets, intermediate widths/lengths/intensities,
       held-out trajectory seeds).
-    - ``P2_extrap``: unseen families: defocus disks, rings, ghosts and any real
-      recorded kernels found in ``real_kernel_dirs`` (``(prefix, directory)``
-      pairs, e.g. ``(("levin", "data/levin"),)``).
+    - ``P2_extrap``: unseen families: defocus disks, rings and ghosts.
+    - ``P2_real`` (only with ``real_kernel_dirs``): real recorded kernels, e.g. the
+      8 Levin et al. (2009) kernels (``(prefix, directory)`` pairs, e.g.
+      ``(("levin", "data/levin/kernels"),)``).
 
     Every kernel is cropped to its support and capped at 31 x 31.
 
@@ -562,10 +563,14 @@ def protocol_v2_psf_sets(real_kernel_dirs: tuple[tuple[str, str], ...] = ()) -> 
         _v2_psf(f"ghost_d{d:g}_a{a:g}", ghost_kernel(d, a), "ghost")
         for d, a in ((6, 30), (10, 100), (14, 160), (18, 60))
     ]
+    # real recorded kernels form their own set, so the pre-registered P2_extrap stays fixed
+    real = []
     for prefix, directory in real_kernel_dirs:
-        extrap += load_kernel_dir(directory, kind="real", prefix=f"{prefix}_", max_size=V2_MAX_KERNEL_SIZE)
+        real += load_kernel_dir(directory, kind="real", prefix=f"{prefix}_", max_size=V2_MAX_KERNEL_SIZE)
 
     sets = {"P1_pool": p1_pool, "P1": p1, "P2_interp": interp, "P2_extrap": extrap}
+    if real:
+        sets["P2_real"] = real
     pool_names = {psf.name for psf in p1_pool}
     if len(pool_names) != len(p1_pool):
         raise ValueError("v2 training pool contains duplicate names")
@@ -574,7 +579,7 @@ def protocol_v2_psf_sets(real_kernel_dirs: tuple[tuple[str, str], ...] = ()) -> 
     pool_seeds = {psf.name.rsplit("_s", 1)[1] for psf in p1_pool if psf.kind == "shake"}
     if any(psf.name.rsplit("_s", 1)[1] in pool_seeds for psf in interp if psf.kind == "shake"):
         raise ValueError("v2 held-out shake kernels reuse a training trajectory seed")
-    held_out = [psf.name for psf in interp + extrap]
+    held_out = [psf.name for psf in interp + extrap + real]
     if len(held_out) != len(set(held_out)) or set(held_out) & pool_names:
         raise ValueError("v2 held-out kernels overlap the training pool or each other")
     corr, a, b = max_cross_family_correlation([psf for psf in p1_pool + interp + extrap if psf.kind != "real"])
