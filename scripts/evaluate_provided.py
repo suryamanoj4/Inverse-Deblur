@@ -20,8 +20,11 @@ If the triplet stores ``crop`` (Sun: 50), ``x`` is the centre of the scene with
 ``crop`` pixels removed on every side, as in Sun et al.'s evaluation; ``y`` is the
 full blurred image, and the restoration is cropped the same way before scoring.
 
-The noise level is not on the protocol grid (Sun: 1% = 2.55/255). Networks receive
-it as is; M2 methods use the lambda of the nearest grid sigma (recorded).
+The noise level is not on the protocol grid (Sun: 1% = 2.55/255). ``--sigma-255 auto``
+estimates it per image (Immerkaer 1996; Sun gives a median of 2.60, Levin real 0.28,
+i.e. little more than 8-bit quantisation). Networks receive sigma as is; M2 methods
+take the lambda of the nearest grid sigma, or with ``--lambda-rule interp`` the
+per-sigma grid linearly interpolated in sigma (recorded in the summary).
 
     PYTHONPATH=src python3 scripts/evaluate_provided.py --protocol v2 --arm m3 \\
         --checkpoint checkpoints/v2/m3/usrnet_full/best.pt --triplets data/levin/benchmark \\
@@ -46,10 +49,31 @@ from deblur.metrics import psnr, ssim  # noqa: E402
 from deblur.operators.fft_conv import fft_convolve  # noqa: E402
 from deblur.protocol import ProtocolConfig  # noqa: E402
 from deblur.psf.library import PSF  # noqa: E402
+from scipy.signal import convolve2d  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("evaluate_main", ROOT / "scripts" / "evaluate.py")
 evaluate_main = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(evaluate_main)
+
+
+def estimate_noise(y: np.ndarray) -> float:
+    """Immerkaer (1996) fast noise-sigma estimate (Laplacian-difference mask)."""
+    mask = np.array([[1, -2, 1], [-2, 4, -2], [1, -2, 1]], dtype=np.float64)
+    h, w = y.shape
+    return float(np.sqrt(np.pi / 2) / (6 * (w - 2) * (h - 2)) * np.abs(convolve2d(y, mask, mode="valid")).sum())
+
+
+def interpolated_lambda(values, sigma, noise_levels):
+    """Per-sigma lambda grid, linearly interpolated in sigma (clamped at the ends).
+
+    On grid points it returns the tuned value exactly; off the grid it replaces the
+    nearest-grid-point rule, which picks a lambda for a much lower or higher noise
+    level (e.g. sigma 2.55/255 -> the sigma 1 lambda)."""
+    if values is None:
+        return None
+    if len(values) == 1:
+        return values[0]
+    return float(np.interp(sigma, np.asarray(noise_levels), np.asarray(values)))
 
 
 def _taper_weights(n: int, projection: np.ndarray) -> np.ndarray:
@@ -111,7 +135,10 @@ def main() -> None:
     parser.add_argument("--arm", required=True, choices=["m1", "m2", "m3"])
     parser.add_argument("--protocol", default="v2", choices=["v1", "v2"])
     parser.add_argument("--triplets", required=True, help="directory of .npz files with x, y, f")
-    parser.add_argument("--sigma-255", type=float, required=True, help="noise level of the provided inputs, /255")
+    parser.add_argument("--sigma-255", required=True,
+                        help="noise level of the provided inputs, /255, or 'auto' (Immerkaer estimate per image)")
+    parser.add_argument("--lambda-rule", default="nearest", choices=["nearest", "interp"],
+                        help="M2 lambda for off-grid sigma: nearest grid point, or linear interpolation in sigma")
     parser.add_argument("--checkpoint", default=None)
     parser.add_argument("--method", default="fista_tv")
     parser.add_argument("--gmm", default=None)
@@ -135,10 +162,12 @@ def main() -> None:
     except ModuleNotFoundError:
         device = "cpu"
     config = ProtocolConfig(data_root="data", protocol_version=args.protocol)
+    if args.lambda_rule == "interp":
+        evaluate_main.resolve_per_sigma = interpolated_lambda
     restore_fn, meta = evaluate_main.build_restorer(args, config, device)
-    sigma = args.sigma_255 / 255.0
+    auto_sigma = str(args.sigma_255).lower() == "auto"
+    fixed_sigma = None if auto_sigma else float(args.sigma_255) / 255.0
     grid = config.noise_levels
-    lambda_sigma = min(grid, key=lambda s: abs(s - sigma)) * 255
 
     files = sorted(Path(args.triplets).glob("*.npz"))[: args.limit] if args.limit else sorted(Path(args.triplets).glob("*.npz"))
     if not files:
@@ -152,6 +181,7 @@ def main() -> None:
         crop = int(data["crop"]) if "crop" in data else 0
         k = k / k.sum()
         pad = args.pad if args.pad is not None else 2 * max(k.shape)
+        sigma = estimate_noise(y) if auto_sigma else fixed_sigma
         y_pad = prepare_input(y, k, pad, args.boundary)
         x_hat = restore_fn(y_pad, PSF(name=path.stem, kernel=k, kind="real"), sigma)
         if pad:
@@ -159,7 +189,7 @@ def main() -> None:
         border = max(k.shape)
         p, s, dy, dx = aligned_scores(x_hat, x, border, args.max_shift, crop)
         p0, _, _, _ = aligned_scores(y, x, border, args.max_shift, crop)
-        rows.append({"triplet": path.stem, "sigma_255": args.sigma_255, "psnr": p, "ssim": s,
+        rows.append({"triplet": path.stem, "sigma_255": sigma * 255, "psnr": p, "ssim": s,
                      "baseline_psnr": p0, "gain": p - p0, "shift_y": dy, "shift_x": dx})
         print(f"{path.stem}: {p:.2f} dB (input {p0:.2f}, shift {dy},{dx})", flush=True)
 
@@ -171,7 +201,9 @@ def main() -> None:
         writer.writerows(rows)
     summary = {
         "triplets": args.triplets, "n": len(rows), "sigma_255": args.sigma_255,
-        "m2_lambda_grid_sigma_255": lambda_sigma if args.arm == "m2" else None,
+        "sigma_255_mean": float(np.mean([r["sigma_255"] for r in rows])),
+        "noise_estimate": "Immerkaer (1996), per image" if auto_sigma else "fixed",
+        "m2_lambda_rule": (f"{args.lambda_rule} on the per-sigma grid" if args.arm == "m2" else None),
         "mean_psnr": float(np.mean([r["psnr"] for r in rows])),
         "mean_ssim": float(np.mean([r["ssim"] for r in rows])),
         "mean_input_psnr": float(np.mean([r["baseline_psnr"] for r in rows])),
