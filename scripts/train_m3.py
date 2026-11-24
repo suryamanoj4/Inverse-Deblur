@@ -33,7 +33,7 @@ import torch
 
 from deblur.data import BSDS500, load_image
 from deblur.data.training_pool import add_pool_arguments, pool_from_args, pool_tag
-from deblur.methods.unrolled import build_model
+from deblur.methods.unrolled import MODELS, build_model
 from deblur.protocol import ProtocolConfig, validation_subset
 from deblur.training import (
     PatchSampler,
@@ -63,7 +63,7 @@ def git_commit() -> str | None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--data-root", required=True, help="directory containing BSDS500")
-    parser.add_argument("--model", default="usrnet", choices=["usrnet", "ista_net", "lista"])
+    parser.add_argument("--model", default="usrnet", choices=sorted(MODELS))
     parser.add_argument("--out", default=None, help="run directory (default checkpoints/m3/<model>)")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--no-amp", action="store_true", help="disable bfloat16 autocast on CUDA")
@@ -74,6 +74,18 @@ def main() -> None:
                         help="v2 only: add real recorded kernels from DIR to P2_extrap (repeatable)")
     add_pool_arguments(parser)
     parser.add_argument("--init", default=None, help="initial weights (optional)")
+    phase3 = parser.add_argument_group("Phase 3 (recorded in run.json)")
+    phase3.add_argument("--budget", default="m3", choices=["m3", "m1"],
+                        help="training budget: m3 (default) or m1 (NAFNet's iterations, batch, learning rate; "
+                             "used by the kernel-placement ladder so every variant matches M1)")
+    phase3.add_argument("--seed", type=int, default=None, help="training seed (default: protocol seed)")
+    phase3.add_argument("--mismatch", type=float, default=0.0,
+                        help="probability of a realistic-forward-model batch (linear blur + edgetaper)")
+    phase3.add_argument("--kernel-noise", type=float, default=0.0,
+                        help="max relative kernel perturbation in mismatch batches")
+    phase3.add_argument("--mismatch-boundary", default="on", choices=["on", "off"],
+                        help="off: selected batches keep circular blur, only the given kernel is perturbed")
+    phase3.add_argument("--n-iter", type=int, default=None, help="unrolled iterations (nafnet_unrolled)")
     smoke = parser.add_argument_group("overrides (recorded as protocol deviations)")
     smoke.add_argument("--iterations", type=int, default=None)
     smoke.add_argument("--batch-size", type=int, default=None)
@@ -93,24 +105,26 @@ def main() -> None:
     config = ProtocolConfig(**base, **config_overrides)
 
     amp = args.device.startswith("cuda") and not args.no_amp
-    reference = TrainSettings.from_protocol(config, arm="m3", amp=amp)
+    budget_arm = args.budget
+    reference = TrainSettings.from_protocol(config, arm=budget_arm, amp=amp)
     settings_overrides = {}
     for name in ("iterations", "val_interval", "log_interval"):
         value = getattr(args, name)
         if value is not None and value != getattr(reference, name):
             settings_overrides[name] = value
             deviations[name] = value
-    settings = TrainSettings.from_protocol(config, arm="m3", amp=amp, **settings_overrides)
-    batch_size = config.m3_batch_size
+    settings = TrainSettings.from_protocol(config, arm=budget_arm, amp=amp, **settings_overrides)
+    batch_size = getattr(config, f"{budget_arm}_batch_size")
+    train_seed = config.seed if args.seed is None else args.seed
     if args.batch_size is not None and args.batch_size != batch_size:
         batch_size = args.batch_size
         deviations["batch_size"] = batch_size
 
 
-    np.random.seed(config.seed)
-    torch.manual_seed(config.seed)
+    np.random.seed(train_seed)
+    torch.manual_seed(train_seed)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(config.seed)
+        torch.cuda.manual_seed_all(train_seed)
 
     pool = pool_from_args(args, config.data_root, config.luminance, config.seed)
     val_set = BSDS500(config.data_root, split="val", luminance=config.luminance)
@@ -141,15 +155,19 @@ def main() -> None:
         patch_size=config.patch_size,
         batch_size=batch_size,
         device=args.device,
-        seed=config.seed,
+        seed=train_seed,
         extra_images=pool.extra_images,
         p_real=pool.p_real,
         kernel_groups=(
             [psf.kind for psf in train_psfs] if config.condition_sampling == "family_balanced" else None
         ),
         quantize=config.quantize_observations,
+        mismatch=args.mismatch,
+        kernel_noise=args.kernel_noise,
+        mismatch_boundary=args.mismatch_boundary == "on",
     )
-    model = build_model(args.model).to(args.device)
+    model_kwargs = {"n_iter": args.n_iter} if args.n_iter is not None else {}
+    model = build_model(args.model, **model_kwargs).to(args.device)
     if args.init:
         state = torch.load(args.init, map_location=args.device, weights_only=False)
         model.load_state_dict(state["model"])
@@ -168,12 +186,19 @@ def main() -> None:
     def forward_fn(net, batch):
         if batch.sigma is None:
             raise RuntimeError("sampler did not provide noise levels")
-        return net(batch.observed, batch.kernel, batch.sigma)
+        out = net(batch.observed, batch.kernel, batch.sigma)
+        if batch.crop:
+            c = batch.crop
+            out = out[..., c:-c, c:-c]
+        return out
 
     metadata = {
         "arm": "M3",
         "model": args.model,
-        "model_kwargs": {},
+        "model_kwargs": model_kwargs,
+        "phase3": {"budget": budget_arm, "seed": train_seed, "mismatch": args.mismatch,
+                   "kernel_noise": args.kernel_noise,
+                   "mismatch_boundary": args.mismatch_boundary},
         "parameters": n_params,
         "regime": "single_model",
         "noise_levels_255": config.noise_levels_over_255,

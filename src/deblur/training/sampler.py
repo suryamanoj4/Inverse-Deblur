@@ -17,6 +17,19 @@ Phase 2 options (all off by default, so protocol v1 batches are unchanged):
   uniformly first, then a kernel within it (``family_balanced``);
 - ``quantize``: observations are rounded to 8-bit levels, matching the
   protocol v2 evaluation observations.
+
+Phase 3 option (off by default): ``mismatch`` is the probability that a batch is
+drawn from a *realistic* forward model instead of the circular one. Such a batch
+blurs a larger crop and keeps the centre (linear, non-circular convolution), then
+prepares the input exactly as the provided-blur evaluation does (edge pad by
+``mismatch_pad``, MATLAB-style edgetaper three times); the target stays the
+centre patch and ``Batch.crop`` tells the caller how much to crop from the
+output. With ``kernel_noise`` > 0, the kernel *given to the network* in those
+batches is perturbed (additive noise of up to ``kernel_noise`` times the kernel
+maximum on the dilated support, clipped, renormalised), mimicking kernels
+estimated from real photographs. With ``mismatch_boundary=False`` the selected
+batches keep the circular forward model and only the given kernel is perturbed
+(the kernel-noise-only arm of the 2x2 ablation).
 """
 
 from __future__ import annotations
@@ -37,6 +50,7 @@ class Batch:
     sigma_index: torch.Tensor  # (B,)
     kernel: torch.Tensor  # (B, P, P) complex spectrum, for physics-aware arms
     sigma: torch.Tensor | None = None  # (B,) noise levels, for physics-aware arms
+    crop: int = 0  # mismatch batches: output border to drop before the loss
 
 
 class PatchSampler:
@@ -54,6 +68,10 @@ class PatchSampler:
         p_real: float = 1.0,
         kernel_groups: list[str] | None = None,
         quantize: bool = False,
+        mismatch: float = 0.0,
+        kernel_noise: float = 0.0,
+        mismatch_pad: int = 31,
+        mismatch_boundary: bool = True,
     ) -> None:
         if not images:
             raise ValueError("no training images")
@@ -98,6 +116,96 @@ class PatchSampler:
         self.noise_levels = torch.as_tensor(
             np.asarray(noise_levels, dtype=np.float32), device=self.device
         )
+        if not 0.0 <= mismatch <= 1.0:
+            raise ValueError("mismatch must be in [0, 1]")
+        self.mismatch = float(mismatch)
+        self.kernel_noise = float(kernel_noise)
+        self.mismatch_boundary = bool(mismatch_boundary)
+        if self.mismatch > 0:
+            self._setup_mismatch(kernels, mismatch_pad)
+
+    # ------------------------------------------------------------------ mismatch
+    def _setup_mismatch(self, kernels: list[np.ndarray], pad: int) -> None:
+        P = self.patch_size
+        S = max(max(k.shape) for k in kernels)
+        S += 1 - S % 2  # odd
+        self.k_size = S
+        self.margin = S // 2 + 1
+        self.pad = pad
+        big = P + 2 * self.margin
+        Q = P + 2 * pad
+        centred = np.zeros((len(kernels), S, S), dtype=np.float32)
+        for i, k in enumerate(kernels):
+            kh, kw = k.shape
+            top, left = S // 2 - kh // 2, S // 2 - kw // 2
+            centred[i, top:top + kh, left:left + kw] = k / k.sum()
+        self.centred = torch.as_tensor(centred, device=self.device)
+        self.spectra_big = torch.as_tensor(
+            np.stack([kernel_spectrum(k, (big, big)) for k in kernels]).astype(np.complex64), device=self.device)
+        self.spectra_q = torch.as_tensor(
+            np.stack([kernel_spectrum(k, (Q, Q)) for k in kernels]).astype(np.complex64), device=self.device)
+
+        def taper(n, proj):
+            ac = np.correlate(proj, proj, "full")
+            ac = ac / ac.max()
+            half = len(ac) // 2
+            w = np.ones(n)
+            w[:half] = ac[:half]
+            w[-half:] = ac[-half:]
+            return w
+
+        self.alpha = torch.as_tensor(np.stack([
+            np.outer(taper(Q, k.sum(1)), taper(Q, k.sum(0))) for k in kernels]).astype(np.float32),
+            device=self.device)
+
+    def _spectrum_from_centred(self, k: torch.Tensor, size: int) -> torch.Tensor:
+        S = k.shape[-1]
+        padded = torch.zeros(k.shape[0], size, size, device=k.device, dtype=k.dtype)
+        padded[:, :S, :S] = k
+        padded = torch.roll(padded, shifts=(-(S // 2), -(S // 2)), dims=(-2, -1))
+        return torch.fft.fft2(padded)
+
+    def _perturb(self, k: torch.Tensor) -> torch.Tensor:
+        B = k.shape[0]
+        support = torch.nn.functional.max_pool2d((k > 0).float()[:, None], 3, 1, 1)[:, 0]
+        scale = torch.as_tensor(self.rng.uniform(0, self.kernel_noise, size=B), device=k.device,
+                                dtype=k.dtype).view(B, 1, 1)
+        noise = torch.randn(k.shape, generator=self.noise_generator, device=k.device, dtype=k.dtype)
+        k = torch.clamp(k + scale * k.amax(dim=(-2, -1), keepdim=True) * noise * support, min=0)
+        return k / k.sum(dim=(-2, -1), keepdim=True)
+
+    def _sample_mismatch(self) -> Batch:
+        B, P, m, pad = self.batch_size, self.patch_size, self.margin, self.pad
+        saved = self.patch_size
+        self.patch_size = P + 2 * m
+        try:
+            big = self._clean_patches(B)
+        finally:
+            self.patch_size = saved
+        psf_index = self._kernel_indices(B)
+        sigma_index = self.rng.integers(len(self.noise_levels), size=B)
+        psf_t = torch.as_tensor(psf_index, device=self.device)
+        sigma_t = torch.as_tensor(sigma_index, device=self.device)
+        xb = torch.as_tensor(big, device=self.device)[:, None]
+        blurred = torch.fft.ifft2(torch.fft.fft2(xb) * self.spectra_big[psf_t][:, None]).real
+        blurred = blurred[..., m:m + P, m:m + P]  # linear convolution of the scene
+        clean = xb[..., m:m + P, m:m + P]
+        noise = torch.randn(blurred.shape, generator=self.noise_generator, device=self.device,
+                            dtype=blurred.dtype)
+        sigma = self.noise_levels[sigma_t].view(B, 1, 1, 1)
+        y = torch.clamp(blurred + sigma * noise, 0.0, 1.0)
+        if self.quantize:
+            y = torch.round(y * 255.0) / 255.0
+        y = torch.nn.functional.pad(y, (pad, pad, pad, pad), mode="replicate")
+        spectra_q = self.spectra_q[psf_t][:, None]
+        alpha = self.alpha[psf_t][:, None]
+        for _ in range(3):
+            y = alpha * y + (1 - alpha) * torch.fft.ifft2(torch.fft.fft2(y) * spectra_q).real
+        given = self.spectra_q[psf_t]
+        if self.kernel_noise > 0:
+            given = self._spectrum_from_centred(self._perturb(self.centred[psf_t]), P + 2 * pad)
+        return Batch(clean=clean, observed=y, psf_index=psf_t, sigma_index=sigma_t, kernel=given,
+                     sigma=self.noise_levels[sigma_t], crop=pad)
 
     def _crop(self, image: np.ndarray) -> np.ndarray:
         P = self.patch_size
@@ -131,6 +239,17 @@ class PatchSampler:
         )
 
     def sample(self) -> Batch:
+        if self.mismatch > 0 and self.rng.random() < self.mismatch:
+            if self.mismatch_boundary:
+                return self._sample_mismatch()
+            batch = self._sample_circular()
+            if self.kernel_noise > 0:
+                batch.kernel = self._spectrum_from_centred(
+                    self._perturb(self.centred[batch.psf_index]), self.patch_size)
+            return batch
+        return self._sample_circular()
+
+    def _sample_circular(self) -> Batch:
         B = self.batch_size
         clean = self._clean_patches(B)
         psf_index = self._kernel_indices(B)

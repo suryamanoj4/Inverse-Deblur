@@ -80,6 +80,7 @@ def main() -> None:
     add_pool_arguments(parser)
     parser.add_argument("--noise-over-255", type=float, default=None, help="per-noise oracle ablation")
     parser.add_argument("--init", default=None, help="initial weights (required for the ablation)")
+    parser.add_argument("--seed", type=int, default=None, help="training seed (default: protocol seed; recorded)")
     smoke = parser.add_argument_group("overrides (recorded as protocol deviations)")
     smoke.add_argument("--iterations", type=int, default=None)
     smoke.add_argument("--batch-size", type=int, default=None)
@@ -148,10 +149,11 @@ def main() -> None:
         f"val on {len(val_images)} images x {len(val_psfs)} PSFs, device {args.device}, amp {amp}"
     )
 
-    np.random.seed(config.seed)
-    torch.manual_seed(config.seed)
+    train_seed = config.seed if args.seed is None else args.seed
+    np.random.seed(train_seed)
+    torch.manual_seed(train_seed)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(config.seed)
+        torch.cuda.manual_seed_all(train_seed)
 
     sampler = PatchSampler(
         images=pool.real_images,
@@ -160,7 +162,7 @@ def main() -> None:
         patch_size=config.patch_size,
         batch_size=batch_size,
         device=args.device,
-        seed=config.seed,
+        seed=train_seed,
         extra_images=pool.extra_images,
         p_real=pool.p_real,
         kernel_groups=(
@@ -202,6 +204,7 @@ def main() -> None:
         "augment": "random rot90 + horizontal flip, before degradation",
         "precision": {"train": "bf16 autocast" if amp else "fp32", "validation": "fp32"},
         "init": args.init,
+        "train_seed": train_seed,
         "validation_images": [image_id for image_id, _ in val_images],
         "deviations": deviations,
         "git_commit": git_commit(),

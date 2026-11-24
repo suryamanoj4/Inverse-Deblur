@@ -1,0 +1,28 @@
+{
+ "method": {
+  "arm": "M2",
+  "method": "wiener",
+  "gmm": null,
+  "backend": "numpy",
+  "stride": null
+ },
+ "images": 10,
+ "crop": 256,
+ "sigma_255": 5.0,
+ "shared_r2": 0.07245327889501041,
+ "per_kernel_r2": 0.9657008497863943,
+ "by_set": {
+  "P1": {
+   "shared_r2": 0.060510652928777886,
+   "per_kernel_r2": 0.9561597533020719
+  },
+  "P2_interp": {
+   "shared_r2": 0.06787145268993866,
+   "per_kernel_r2": 0.9584659759049197
+  },
+  "P2_extrap": {
+   "shared_r2": 0.08943062607586816,
+   "per_kernel_r2": 0.9830094624642616
+  }
+ }
+}

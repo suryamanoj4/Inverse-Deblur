@@ -93,6 +93,8 @@ def edgetaper(y: np.ndarray, kernel: np.ndarray) -> np.ndarray:
 
 
 def prepare_input(y: np.ndarray, kernel: np.ndarray, pad: int, boundary: str) -> np.ndarray:
+    if boundary == "none":
+        return y
     if boundary == "symmetric":
         return np.pad(y, pad, mode="symmetric")
     y_pad = np.pad(y, pad, mode="edge")
@@ -149,7 +151,8 @@ def main() -> None:
     parser.add_argument("--m2-backend", default="numpy", choices=["numpy", "torch"])
     parser.add_argument("--m2-batch", type=int, default=8)
     parser.add_argument("--pad", type=int, default=None, help="symmetric padding (default 2 x kernel size)")
-    parser.add_argument("--boundary", default="edgetaper", choices=["edgetaper", "symmetric"])
+    parser.add_argument("--boundary", default="edgetaper", choices=["edgetaper", "symmetric", "none"],
+                        help="'none': input used as is (for triplets made with the circular model; use --pad 0)")
     parser.add_argument("--max-shift", type=int, default=5)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--device", default=None)
@@ -180,7 +183,7 @@ def main() -> None:
         k = np.asarray(data["f"], dtype=np.float64)
         crop = int(data["crop"]) if "crop" in data else 0
         k = k / k.sum()
-        pad = args.pad if args.pad is not None else 2 * max(k.shape)
+        pad = args.pad if args.pad is not None else (0 if args.boundary == "none" else 2 * max(k.shape))
         sigma = estimate_noise(y) if auto_sigma else fixed_sigma
         y_pad = prepare_input(y, k, pad, args.boundary)
         x_hat = restore_fn(y_pad, PSF(name=path.stem, kernel=k, kind="real"), sigma)
