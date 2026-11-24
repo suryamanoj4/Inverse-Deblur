@@ -25,6 +25,8 @@ const h3lpips = JSON.parse(fs.readFileSync(path.join(GEN, "h3_lpips.json")));
 const texture = JSON.parse(fs.readFileSync(path.join(GEN, "texture.json"))).sets;
 // Phase 2 numbers (learning curve, M3 on v1) from scripts/analyze_phase2.py.
 const phase2 = JSON.parse(fs.readFileSync(path.join(GEN, "phase2.json")));
+// Phase 3 numbers (placement ladder, kernel-swap probe, mismatch ablation) from scripts/analyze_phase3.py.
+const phase3 = JSON.parse(fs.readFileSync(path.join(GEN, "phase3.json")));
 
 // ---- theme ---------------------------------------------------------------
 // Ink and slate dominate; rust marks M1 (data-only), teal M2 (physics-aware),
@@ -168,7 +170,7 @@ async function build() {
   let s = pres.addSlide({ masterName: "TITLE_DARK", sectionTitle: "Introduction" });
   s.addText("Should a deblurring model know the physics?", { placeholder: "title" });
   s.addText([
-    { text: "Classical vs. modern inverse-function learning · Mid evaluation · updated with Phase 2 results", options: { breakLine: true } },
+    { text: "Classical vs. modern inverse-function learning · updated with Phase 2 and Phase 3 results", options: { breakLine: true } },
     { text: "Surya Manoj Pentakota (2026701036) · Kevin Paul Reddy Janagari (2026900006) · IIIT Hyderabad",
       options: { fontSize: 15, color: C.accent4 } },
   ], { placeholder: "body" });
@@ -890,6 +892,161 @@ async function build() {
     "same small drop as the classical solver, not NAFNet's 2.8 dB. Using the kernel inside the network is what transfers. ISTA-Net and LISTA " +
     "also keep their accuracy on unseen kernels, but their small learned priors are weaker in absolute terms.");
 
+  // 15d. Phase 3 ------------------------------------------------------------
+  pres.addSection({ title: "Phase 3 results" });
+  const L = phase3.ladder, SD = phase3.seeds, BM = phase3.benchmarks, PR = phase3.probe;
+  const TABLE = { fontSize: 13, color: C.text1, border: { type: "solid", pt: 0.5, color: "D5DAE1" }, valign: "middle",
+    fill: { color: C.background1 }, margin: 0.06 };
+  const hdr = (cells) => cells.map((t) => ({ text: t, options: { bold: true, fill: { color: C.background2 } } }));
+  const cell = (v, opts = {}) => ({ text: v == null ? "–" : (typeof v === "number" ? f2(v) : v), options: opts });
+
+  // P3-1: framing and pre-registered predictions
+  s = content("Phase 3: diagnose → explain → fix → validate", "Phase 3 results");
+  {
+    text(s, "Predictions were written down before any Phase 3 training (vault/Phase 3 Pre-registration.md).",
+      { x: 0.6, y: 1.35, w: 12.1, h: 0.4, fontSize: 14, color: C.text2 });
+    const rows = [
+      ["Placement", "Unrolled NAFNet: no drop on unseen families, ≥ one-step K-NAFNet everywhere",
+        `${f2(L.nafnet_unrolled.P2_extrap)} dB extrap vs ${f2(L.nafnet_unrolled.P1)} P1; above K-NAFNet on every set`, "Holds", M2],
+      ["Placement", "One FFT data step (K-NAFNet) removes the unseen-family drop (< 0.5 dB)",
+        `Drop is still ${f2(L.knafnet.P1 - L.knafnet.P2_extrap)} dB: one step is not enough`, "Fails", M1],
+      ["Mismatch training", "USRNet gains ≥ 0.5 dB on real-kernel benchmarks, loses ≤ 0.2 dB on the grid",
+        `Levin real +${f2(L.usrnet_mm.levin_real.all - L.usrnet_full.levin_real.all)}, Sun +${f2(L.usrnet_mm.sun - BM.usrnet.sun)}; grid −${f2(L.usrnet_full.P1 - L.usrnet_mm.P1)}`, "Holds", M2],
+      ["Control", "On circular Sun (exact forward model) USRNet ≥ EPLL",
+        `EPLL still wins (${f2(BM.epll.sun_circular)} vs ${f2(BM.usrnet.sun_circular)}): boundaries do not explain it`, "Fails", M1],
+      ["Explanation", "NAFNet applies one fixed filter whatever the kernel",
+        `Shared filter explains R² ${phase3.linear_filter.nafnet.shared_r2.toFixed(2)}, per-kernel ${phase3.linear_filter.nafnet.per_kernel_r2.toFixed(2)}: it adapts`, "Fails", M1],
+    ];
+    s.addTable([hdr(["Experiment", "Prediction", "Result", "Verdict"]),
+      ...rows.map(([e, p, r, v, c]) => [cell(e, { bold: true }), cell(p), cell(r), cell(v, { bold: true, color: c, align: "center" })])],
+      { x: 0.6, y: 1.85, w: 12.1, colW: [1.8, 4.6, 4.6, 1.1], rowH: 0.78, ...TABLE });
+  }
+  s.addNotes("Phase 2 diagnosed two failures: data-only networks do not transfer to unseen kernel families, and USRNet loses to " +
+    "EPLL on provided real blur. Phase 3 tries to explain and fix them. We wrote the predictions down first; three of five failed " +
+    "and are reported as failed. The ones that matter for the main claim hold.");
+
+  // P3-2: placement ladder
+  s = content("Where the kernel enters, not whether it does", "Phase 3 results");
+  {
+    const nm = SD.nafnet.mean;
+    const rungs = [["No kernel (NAFNet, 3 seeds)", nm], ["Kernel as input maps", L.nafnet_concat], ["FiLM in every block", L.nafnet_film],
+      ["FiLM + one FFT data step", L.knafnet], ["4-stage unrolled", L.nafnet_unrolled], ["USRNet (reference)", L.usrnet_full]];
+    text(s, "One NAFNet backbone, data and budget; only the kernel's entry changes (PSNR, σ > 0)",
+      { x: 0.6, y: 1.35, w: 7.9, h: 0.4, fontSize: 14, bold: true });
+    s.addChart(pres.charts.BAR, [["P1 (training families)", "P1"], ["P2-extrap (unseen families)", "P2_extrap"]].map(([name, key]) => ({
+      name, labels: rungs.map((r) => r[0]), values: rungs.map((r) => +r[1][key].toFixed(2)),
+    })), {
+      x: 0.6, y: 1.75, w: 7.9, h: 5.0, barDir: "bar", barGrouping: "clustered", barGapWidthPct: 45,
+      chartColors: ["B7BEC9", M3], showValue: true, dataLabelPosition: "outEnd", dataLabelFormatCode: "0.0",
+      showLegend: true, legendPos: "b", valAxisMinVal: 15, valAxisMaxVal: 29, catAxisOrientation: "maxMin",
+      showTitle: false, ...CHART_TEXT,
+    });
+    const d = (m) => m.P2_extrap - nm.P2_extrap;
+    const stat = [
+      [`${f2(d(L.nafnet_concat))} / ${f2(d(L.nafnet_film))} dB`, `Input maps / FiLM on unseen families vs. no kernel (seed σ ±${SD.nafnet.std.P2_extrap.toFixed(2)})`, M1],
+      [`+${f2(d(L.knafnet))} dB`, "One FFT data step: the kernel starts to help", AMBER],
+      [`+${f2(d(L.nafnet_unrolled))} dB`, `Unrolled: no unseen-family drop; matches USRNet within ${Math.abs(L.nafnet_unrolled.P2_extrap - L.usrnet_full.P2_extrap).toFixed(2)} dB`, M2],
+    ];
+    for (let i = 0; i < 3; i++) {
+      const y = 1.5 + i * 1.75;
+      card(s, 8.75, y, 3.95, 1.5, { name: `ladder stat ${i + 1}` });
+      text(s, stat[i][0], { x: 9.0, y: y + 0.15, w: 3.5, h: 0.6, fontSize: 24, bold: true, color: stat[i][2], fontFace: THEME.headFontFace });
+      text(s, stat[i][1], { x: 9.0, y: y + 0.78, w: 3.5, h: 0.65, fontSize: 13, color: C.text2 });
+    }
+  }
+  s.addNotes("The ladder keeps everything fixed except where the kernel enters. Giving the network the kernel as input maps or FiLM " +
+    "buys about 0.6 dB on training families and costs 1.2 and 3.8 dB on unseen families, worse than not giving it the kernel at all. " +
+    "A single FFT data step turns the kernel into a help; four unrolled stages remove the unseen-family drop and match USRNet, so USRNet's " +
+    "advantage is the placement, not its particular architecture. Conditioned variants are seed 0; seeds 1 and 2 are running.");
+
+  // P3-3: kernel-swap probe
+  s = content("Kernel-swap probe: the kernel becomes a lookup key", "Phase 3 results");
+  {
+    const methods = [["Wiener (physics)", "wiener"], ["NAFNet (no kernel)", "nafnet"], ["Input maps", "nafnet_concat"],
+      ["FiLM every block", "nafnet_film"], ["K-NAFNet (1 step)", "knafnet"], ["Unrolled NAFNet", "nafnet_unrolled"], ["USRNet", "usrnet_full"]];
+    const e = (m, c) => PR[m][`P2_extrap/${c}`];
+    const gain = (m) => e(m, "true") - Math.max(e(m, "nearest"), e(m, "random"), e(m, "delta"));
+    text(s, "Unseen families: blur with the true kernel, then tell the method a true, nearest-training or no-blur kernel",
+      { x: 0.6, y: 1.35, w: 12.1, h: 0.4, fontSize: 14, bold: true });
+    s.addTable([hdr(["Method", "True", "Nearest training", "No blur", "Worth of true kernel"]),
+      ...methods.map(([name, m]) => {
+        const g = gain(m);
+        return [cell(name, { bold: true }), cell(e(m, "true")), cell(e(m, "nearest")), cell(e(m, "delta")),
+          cell((g >= 0 ? "+" : "") + f2(g) + " dB", { bold: true, color: g < 0 ? M1 : g > 1 ? M2 : HEX.dk2 })];
+      })],
+      { x: 0.6, y: 1.85, w: 8.2, colW: [2.2, 1.4, 1.6, 1.5, 1.5], rowH: 0.5, ...TABLE });
+    card(s, 9.1, 1.85, 3.6, 4.2, { name: "probe takeaway" });
+    text(s, "Reading it", { x: 9.35, y: 2.0, w: 3.1, h: 0.4, fontSize: 16, bold: true, color: AMBER });
+    bullets(s, [
+      `FiLM scores higher with a wrong kernel than the true one (${f2(e("nafnet_film", "true"))} vs ${f2(e("nafnet_film", "delta"))}): no physics model can do that`,
+      "In distribution the same nets lose ~8 dB with a random kernel: they rely on it as a key",
+      "Through a data step the true kernel is worth +3 to +7 dB, like Wiener",
+    ], { x: 9.35, y: 2.45, w: 3.15, h: 3.5, fontSize: 13, color: C.text2 });
+    text(s, "Worth of the true kernel = true − best wrong kernel (nearest, random or delta). 50 test images × 12 unseen kernels × σ ∈ {1, 5, 15, 25}.",
+      { x: 0.6, y: 6.55, w: 12.1, h: 0.35, fontSize: 11, color: C.text2 });
+  }
+  s.addNotes("The observations are always made with the true kernel; only the kernel we tell the method changes. Wiener behaves like " +
+    "physics: any wrong kernel costs 3 to 5 dB. The FiLM network on unseen families does better with no-blur or the nearest training " +
+    "kernel than with the truth, so it uses the kernel as a key into learned mappings. A data step restores physical use of the kernel.");
+
+  // P3-4: real blur and mismatch training
+  s = content("Real captures: simulate the boundary too", "Phase 3 results");
+  {
+    const rows = [["USRNet (standard)", L.usrnet_full, BM.usrnet.sun, BM.usrnet.sun_circular],
+      ["+ realistic boundaries", L.usrnet_mm_boundary, L.usrnet_mm_boundary.sun, L.usrnet_mm_boundary.sun_circular],
+      ["+ kernel noise", L.usrnet_mm_knoise, L.usrnet_mm_knoise.sun, L.usrnet_mm_knoise.sun_circular],
+      ["+ both", L.usrnet_mm, L.usrnet_mm.sun, L.usrnet_mm.sun_circular]];
+    text(s, "2×2 ablation of mismatch-aware training (half of the batches): PSNR in dB", { x: 0.6, y: 1.35, w: 12.1, h: 0.4, fontSize: 14, bold: true });
+    s.addTable([hdr(["USRNet trained with", "Grid P1", "Grid extrap", "Levin real", "Levin, 2 largest", "Sun", "Sun circular"]),
+      ...rows.map(([name, g, sun, sc], i) => [cell(name, { bold: true }), cell(g.P1), cell(g.P2_extrap), cell(g.levin_real.all),
+        cell(g.levin_real.big2, { bold: i > 0, color: i === 1 ? M2 : C.text1 }), cell(sun), cell(sc)]),
+      [cell("EPLL / FISTA (classical)", { color: C.text2 }), cell("–"), cell("–"),
+        cell(`${f2(BM.epll.levin_real)} / ${f2(BM.fista.levin_real)}`, { color: C.text2 }), cell("–"),
+        cell(`${f2(BM.epll.sun)} / ${f2(BM.fista.sun)}`, { color: C.text2 }),
+        cell(`${f2(BM.epll.sun_circular)} / ${f2(BM.fista.sun_circular)}`, { color: C.text2 })]],
+      { x: 0.6, y: 1.85, w: 12.1, colW: [2.6, 1.25, 1.35, 1.6, 2.3, 1.4, 1.6], rowH: 0.55, ...TABLE });
+    bullets(s, [
+      `Realistic boundaries alone fix the collapse on Levin's largest kernels (${f2(L.usrnet_full.levin_real.big2)} → ${f2(L.usrnet_mm_boundary.levin_real.big2)} dB) at no cost on the grid`,
+      "Kernel noise adds a smaller gain and costs ~0.1 dB in distribution; both together give the best Levin real score",
+      `Sun gains equally with circular blur, so its gap to EPLL is not about boundaries (Sun is itself synthetic); the boundary run also trained longer (120k vs 80k iterations)`,
+    ], { x: 0.6, y: 5.35, w: 12.1, h: 1.5, fontSize: 13, color: C.text2 });
+  }
+  s.addNotes("Nan and Ji (CVPR 2020) already train with kernel noise and edge-tapering together. Our ablation separates them: " +
+    "simulating realistic image boundaries is what fixes real captures with large kernels, and it costs nothing in distribution. " +
+    "With it, the learned solver beats both classical solvers on Levin's real captures.");
+
+  // P3-5: novelty
+  s = content("What is new here, and what is not", "Phase 3 results");
+  {
+    const cols = [
+      ["Likely new (not found in our review)", M2, [
+        "Kernel conditioning (input maps, FiLM) makes unseen-family deblurring worse than no kernel",
+        "Kernel-swap probe: the true kernel can score below a wrong one, so the net uses it as a key",
+        "Controlled placement ladder on one backbone; unrolling with a generic prior matches USRNet",
+        "Worth of the kernel tracks its spectral loss (Spearman ρ ≈ −0.9 to −0.98)",
+        "Boundary realism, not kernel noise, carries the real-capture gain",
+        "Held-out-family protocol (defocus, ring, ghost) with paired statistics",
+      ]],
+      ["Known (cited, not claimed)", HEX.dk2, [
+        "Kernel maps / SFT / FiLM conditioning: SRMD 2018, SFTMD 2019, Kaufman & Fattal 2020",
+        "Data step and unrolling: USRNet 2020, DPIR 2021, DWDN 2020",
+        "End-to-end nets transfer worse to new blur: Chen et al. IJCV 2022, Blur2Blur 2024",
+        "Kernel-noise + edgetaper training: Nan & Ji, CVPR 2020",
+        "FFT solvers fail on Levin's largest kernels: Eboli et al., ECCV 2020",
+      ]],
+    ];
+    cols.forEach(([title, color, items], i) => {
+      const x = 0.6 + i * 6.15;
+      card(s, x, 1.45, 5.95, 4.75, { name: `novelty card ${i + 1}` });
+      text(s, title, { x: x + 0.25, y: 1.6, w: 5.5, h: 0.45, fontSize: 16, bold: true, color });
+      bullets(s, items, { x: x + 0.25, y: 2.15, w: 5.45, h: 3.95, fontSize: 13, color: C.text2 });
+    });
+    text(s, "Limits: our own reimplementations, grayscale BSDS500, one backbone; seeds for the conditioned variants are still running.",
+      { x: 0.6, y: 6.4, w: 12.1, h: 0.4, fontSize: 12, color: C.text2 });
+  }
+  s.addNotes("The mechanisms are all known; what is new is the controlled measurement and the counter-intuitive result that " +
+    "conditioning hurts out of distribution, plus the probe that explains why. Absence in our review is not proof, and we say so.");
+
   // 16. Challenges ---------------------------------------------------------
   pres.addSection({ title: "Challenges" });
   s = content("Challenges and how we addressed them", "Challenges");
@@ -917,10 +1074,10 @@ async function build() {
   pres.addSection({ title: "Next steps" });
   s = content("Remaining work and plan to the final evaluation", "Next steps");
   const phases = [
-    ["Done", "M3 + data curve", "M3 fixed, trained, evaluated on v1; NAFNet on 50/100 images; LPIPS and H3 with M3 running", M3],
-    ["Next", "Data control", "Flat curve closes the synthetic-data gate; NAFNet + DIV2K run as a control once downloaded", AMBER],
-    ["Queued, ≈ 3–4 GPU-days", "Protocol v2", "60 test kernels in 7 distinct families, family-balanced training, 8-bit observations; all arms retrained", M2],
-    ["Last", "Attacks, report", "White-box attack on M2, H3 on v2, LPIPS; final report and scorecard", M1],
+    ["Done", "Phases 1–2", "Three arms on v1 and v2, learning curve, DIV2K control, Levin and Sun real-kernel benchmarks", M3],
+    ["Done", "Phase 3", "Placement ladder, kernel-swap probe, 2×2 mismatch ablation, linear-filter test, NAFNet/USRNet seeds", M2],
+    ["Running, ≈ 2 GPU-days", "Seeds", "Seeds 1 and 2 for the input-map, FiLM and K-NAFNet variants (error bars on the main claim)", AMBER],
+    ["Last", "Statistics, report", "Paired Wilcoxon + Holm on every claim, deviations section, final report and figures", M1],
   ];
   s.addShape(pres.shapes.LINE, { x: 1.0, y: 2.35, w: 11.3, h: 0, line: { color: "C9CFD8", width: 2 } });
   for (let i = 0; i < 4; i++) {
@@ -935,19 +1092,18 @@ async function build() {
     text(s, phases[i][2], { x: x + 0.25, y: 3.6, w: 2.4, h: 1.9, fontSize: 13, color: C.text2 });
   }
   card(s, 0.6, 5.9, 12.1, 0.8, { fill: C.background1, line: "D5DAE1", shadow: false, name: "stretch note" });
-  text(s, "Phase 3, after v2: K-NAFNet (kernel-conditioned NAFNet) · optional: GoPro real blur · real measured kernels in P2-extrap",
+  text(s, "Optional if time allows: a second backbone (U-Net ladder) · leave-one-family-out training · official pretrained USRNet/DPIR weights",
     { x: 0.85, y: 6.0, w: 11.6, h: 0.6, fontSize: 13, color: C.text2, valign: "middle" });
-  s.addNotes("M3 and the learning curve are done. The flat learning curve closes the synthetic-data gate; DIV2K remains a control run. " +
-    "Then protocol v2 answers the reviewer's request for more kernel variety: six kernel families, all arms retrained on the same data. " +
-    "Robustness experiments and the write-up follow; the kernel-conditioned NAFNet comes after v2.");
+  s.addNotes("All planned experiments are done except the seeds for the conditioned ladder variants, which are running. " +
+    "What remains is the statistics on every claim and the write-up. The optional items are what a reviewer would ask next.");
 
   // 18. Expected outcomes --------------------------------------------------
   s = content("Expected outcomes for the final evaluation", "Next steps");
   const outcomes = [
-    [fa.FaColumns, "A complete three-arm comparison", "PSNR, SSIM, LPIPS, consistency, mismatch and stability for M1, M2, M3 on identical observations, with paired statistics", M2],
-    [fa.FaLayerGroup, "M3 combines M1's prior with M2's robustness", "Confirmed on v1 for USRNet: P2 drop " + f2(phase2.mean.usrnet.p2_drop) + " dB (NAFNet " + f2(phase2.mean.nafnet.p2_drop) + ") and the best P1 accuracy; v2 tests it on six kernel families", M3],
-    [fa.FaShieldAlt, "A fuller stability test", "M3 more stable than M1 under transfer attack; white-box M2 attack shows whether M2's advantage survives its own worst case", AMBER],
-    [fa.FaLightbulb, "A diagnosis for a follow-up method", "Physics-aware network with a locally adaptive prior (GMM-routed experts or spatially varying λ)", M1],
+    [fa.FaColumns, "A complete three-arm comparison", "M1, M2, M3 on identical observations, v1 and v2 protocols, Levin and Sun real-kernel benchmarks, paired statistics", M2],
+    [fa.FaLayerGroup, "The main claim: placement, not presence, of the kernel", "Conditioning hurts unseen families (" + f2(phase3.ladder.nafnet_film.P2_extrap - phase3.seeds.nafnet.mean.P2_extrap) + " dB); unrolling removes the drop (+" + f2(phase3.ladder.nafnet_unrolled.P2_extrap - phase3.seeds.nafnet.mean.P2_extrap) + " dB), with seeds as error bars", M3],
+    [fa.FaSearch, "A mechanism, not just a measurement", "Kernel-swap probe and spectral-loss analysis show conditioned nets use the kernel as a lookup key", AMBER],
+    [fa.FaLightbulb, "A practical recipe for real captures", "Train an unrolled solver with realistic-boundary batches: best on Levin real, no in-distribution cost", M1],
   ];
   for (let i = 0; i < outcomes.length; i++) {
     const y = 1.45 + i * 1.33;
@@ -955,21 +1111,20 @@ async function build() {
     text(s, outcomes[i][1], { x: 1.6, y: y + 0.02, w: 11.1, h: 0.4, fontSize: 17, bold: true });
     text(s, outcomes[i][2], { x: 1.6, y: y + 0.45, w: 11.1, h: 0.75, fontSize: 14, color: C.text2 });
   }
-  s.addNotes("The main expected outcome is the full three-arm comparison. The key prediction is that M3 keeps M2's robustness to " +
-    "unseen kernels while matching M1 in distribution; if it does not, that is itself an informative result. We also expect a fairer " +
-    "stability test and a clear motivation for the follow-up method.");
+  s.addNotes("The final report will carry the three-arm comparison, the placement claim with seed error bars, the probe that explains " +
+    "it, and the boundary-realism recipe for real captures, each with paired statistics and the failed predictions reported as failed.");
 
   // 19. Closing ------------------------------------------------------------
   s = pres.addSlide({ masterName: "TITLE_DARK", sectionTitle: "Next steps" });
-  s.addText("Knowing the physics is what transfers", { placeholder: "title" });
+  s.addText("Where the kernel enters decides what transfers", { placeholder: "title" });
   s.addText([
-    { text: "On training kernels a 17 M-parameter network and a GMM with five tuned scalars are tied; on unseen kernels the physics-aware solver wins by up to 6.4 dB.",
+    { text: "Feeding the kernel to a network makes it a lookup key that fails on unseen blur; only a data-consistency step makes the network use it as physics.",
       options: { breakLine: true } },
     { text: "Questions?", options: { fontSize: 24, bold: true, color: C.accent3 } },
   ], { placeholder: "body" });
   await iconCircle(s, fa.FaEye, 0.8, 0.9, 0.9, M2, "closing icon");
-  s.addNotes("Summary: in distribution, the deep network and the classical solver are on par. Under kernel mismatch, using the " +
-    "physics is what transfers. M3 will show whether a deep prior inside a physics-aware solver gets the best of both.");
+  s.addNotes("Summary: knowing the kernel is not enough; it has to enter through the physics. On real captures, the learned solver " +
+    "also needs to see realistic boundaries in training.");
 
   // 20. Appendix: glossary -------------------------------------------------
   pres.addSection({ title: "Appendix" });
