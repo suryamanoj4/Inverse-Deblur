@@ -44,7 +44,9 @@ except ModuleNotFoundError:  # pragma: no cover
     HAS_TORCH = False
 
 # Protocol v1 is frozen: these kernels produced the mid-evaluation results.
-V1_DIGEST = "c3b1a3c59b51c9f4d300e271bbdfb9301182f305ba690ccaea320a8620b33d83"
+# v1 kernels rounded to 12 decimals: independent of numpy/scipy version. (The exact-byte digest
+# recorded in the v1 manifests, c3b1a3c5..., was made with numpy 2.x; older numpy differs by ~1e-17.)
+V1_DIGEST = "106e329a8eb7645b355798475f0116a328003777ff7fc01c27a7fc7ff67ac259"
 
 
 def smooth_image(shape=(48, 64), seed=0):
@@ -59,7 +61,7 @@ class TestProtocolVersions(unittest.TestCase):
     def test_v1_kernel_sets_are_frozen(self):
         sets = protocol_psf_sets()
         self.assertEqual({k: len(v) for k, v in sets.items()}, {"P1": 12, "P2_interp": 11, "P2_extrap": 4})
-        self.assertEqual(psf_sets_digest(sets), V1_DIGEST)
+        self.assertEqual(psf_sets_digest(sets, decimals=12), V1_DIGEST)
 
     def test_v2_sets(self):
         sets = protocol_psf_sets("v2")

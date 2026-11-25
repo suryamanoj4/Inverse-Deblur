@@ -42,13 +42,22 @@ def _cached_psf_sets(version: str, real_kernel_dirs: tuple[tuple[str, str], ...]
     return protocol_psf_sets(version, real_kernel_dirs=real_kernel_dirs)
 
 
-def psf_sets_digest(psf_sets: dict[str, list[PSF]]) -> str:
-    """SHA-256 over every kernel's name and values: changes if any set changes."""
+def psf_sets_digest(psf_sets: dict[str, list[PSF]], decimals: int | None = None) -> str:
+    """SHA-256 over every kernel's name and values: changes if any set changes.
+
+    With ``decimals`` the values are rounded first, so the digest does not depend
+    on last-bit floating-point differences between numpy/scipy versions (about
+    1e-17 for the Gaussian kernels). The default (exact bytes) is what run
+    manifests record.
+    """
     digest = hashlib.sha256()
     for set_name in sorted(psf_sets):
         for psf in psf_sets[set_name]:
             digest.update(f"{set_name}/{psf.name}/{psf.kernel.shape}".encode())
-            digest.update(np.ascontiguousarray(psf.kernel, dtype=np.float64).tobytes())
+            k = np.asarray(psf.kernel, dtype=np.float64)
+            if decimals is not None:
+                k = np.round(k, decimals) + 0.0  # + 0.0 folds -0.0 into 0.0
+            digest.update(np.ascontiguousarray(k).tobytes())
     return digest.hexdigest()
 
 
