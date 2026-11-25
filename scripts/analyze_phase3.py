@@ -86,7 +86,7 @@ def main() -> None:
     ladder = {"nafnet": grid(V2 / "m1_nafnet_test_summary.json"),
               "usrnet_full": grid(V2 / "m3_usrnet_full_test_summary.json")}
     for m in ("nafnet_concat", "nafnet_film", "knafnet", "nafnet_unrolled", "usrnet_mm",
-              "usrnet_mm_boundary", "usrnet_mm_boundary66k", "usrnet_mm_knoise"):
+              "usrnet_mm_boundary", "usrnet_mm_boundary66k", "usrnet_mm_knoise", "nafnet_dc", "knafnet_mm"):
         g = grid(P3 / f"{m}_test_summary.json")
         if g:
             g["p2_real"] = (grid(P3 / f"{m}_p2real_summary.json") or {}).get("P2_real")
@@ -113,7 +113,7 @@ def main() -> None:
     # kernel-swap probe
     probe = {}
     for m in ("wiener", "nafnet", "nafnet_concat", "nafnet_film", "knafnet", "nafnet_unrolled", "usrnet_full",
-              "unet", "unet_concat", "unet_film", "kunet"):
+              "unet", "unet_concat", "unet_film", "kunet", "nafnet_dc"):
         p = P3 / f"probe_{m}_summary.json"
         if p.exists():
             probe[m] = json.loads(p.read_text())["mean_psnr"]

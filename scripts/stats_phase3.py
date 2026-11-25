@@ -40,22 +40,23 @@ GRID = {
     **{m: [P3 / f"{m}_test.csv", P3 / f"{m}_seed1_test.csv", P3 / f"{m}_seed2_test.csv"]
        for m in ("nafnet_concat", "nafnet_film", "knafnet", "nafnet_unrolled")},
     **{m: [P3 / f"{m}_test.csv"] for m in ("usrnet_mm", "usrnet_mm_boundary", "usrnet_mm_boundary66k", "usrnet_mm_knoise",
-                                           "unet_concat", "unet_film", "kunet")},
+                                           "unet_concat", "unet_film", "kunet", "nafnet_dc", "knafnet_mm")},
     "unet": [V2 / "m1_unet_test.csv"],
 }
 LADDER_PAIRS = [("nafnet_concat", "nafnet"), ("nafnet_film", "nafnet"), ("knafnet", "nafnet"),
                 ("nafnet_unrolled", "nafnet"), ("knafnet", "nafnet_film"), ("nafnet_unrolled", "knafnet"),
                 ("nafnet_unrolled", "usrnet_full"),
-                ("unet_concat", "unet"), ("unet_film", "unet"), ("kunet", "unet"), ("kunet", "unet_film")]
-MISMATCH = ("usrnet_mm_boundary", "usrnet_mm_boundary66k", "usrnet_mm_knoise", "usrnet_mm")
+                ("unet_concat", "unet"), ("unet_film", "unet"), ("kunet", "unet"), ("kunet", "unet_film"),
+                ("nafnet_dc", "nafnet"), ("knafnet", "nafnet_dc")]
+MISMATCH = ("usrnet_mm_boundary", "usrnet_mm_boundary66k", "usrnet_mm_knoise", "usrnet_mm", "knafnet_mm")
 PROVIDED = {
     "levin_real": {"usrnet_full": B / "levin_real_est" / "usrnet.csv", "epll": B / "levin_real_est" / "epll.csv",
-                   **{m: P3 / f"{m}_levin_real_est.csv" for m in MISMATCH}},
+                   **{m: P3 / f"{m}_levin_real_est.csv" for m in MISMATCH + ("knafnet",)}},
     "sun": {"usrnet_full": B / "sun_provided_est" / "usrnet.csv", "epll": B / "sun_provided_est" / "epll.csv",
-            **{m: P3 / f"{m}_sun_est.csv" for m in MISMATCH}},
+            **{m: P3 / f"{m}_sun_est.csv" for m in MISMATCH + ("knafnet",)}},
 }
 PROBE = ("nafnet_concat", "nafnet_film", "knafnet", "nafnet_unrolled", "usrnet_full", "wiener",
-         "unet_concat", "unet_film", "kunet")
+         "unet_concat", "unet_film", "kunet", "nafnet_dc")
 
 
 def holm(tests: list[dict]) -> None:
@@ -115,14 +116,15 @@ def main() -> None:
     mismatch = []
     for m in MISMATCH:
         if grid[m]:
+            base = "knafnet" if m == "knafnet_mm" else "usrnet_full"
             for s in SETS:
-                mismatch.append(test(f"{m} - usrnet_full / grid {s}", per_image(grid[m], grid["usrnet_full"], s),
+                mismatch.append(test(f"{m} - {base} / grid {s}", per_image(grid[m], grid[base], s),
                                      unit="test image"))
         for bench, files in PROVIDED.items():
             x = load_provided(files[m])
             if not x:
                 continue
-            for ref in ("usrnet_full", "epll"):
+            for ref in ("usrnet_full", "epll") + (("knafnet", "usrnet_mm_boundary") if m == "knafnet_mm" else ()):
                 y = load_provided(files[ref])
                 keys = sorted(set(x) & set(y))
                 if keys:

@@ -179,6 +179,20 @@ class KNAFNet(nn.Module):
         return data_step(y.float(), spectrum, z.float(), mu.view(-1, 1, 1, 1))
 
 
+class NAFNetDC(nn.Module):
+    """Plain NAFNet (no kernel conditioning), then one closed-form FFT data-consistency step."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.net = CondNAFNet()
+        self.mu = nn.Sequential(nn.Linear(1, 64), nn.ReLU(), nn.Linear(64, 1))
+
+    def forward(self, y, spectrum, sigma):
+        z = self.net(y)
+        mu = F.softplus(self.mu(sigma.reshape(-1, 1).float() * 255.0 / 25.0)) + 1e-4
+        return data_step(y.float(), spectrum, z.float(), mu.view(-1, 1, 1, 1))
+
+
 class NAFNetUnrolled(nn.Module):
     """HQS with a shared FiLM NAFNet prior conditioned on kernel, sigma and stage."""
 
