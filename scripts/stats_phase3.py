@@ -6,7 +6,7 @@ test image is one unit (mean over its kernels and sigma > 0), compared with a pa
 Wilcoxon signed-rank test; on provided-blur benchmarks each image-kernel triplet is
 one unit. Holm correction is applied within each family of comparisons:
 
-* ``ladder``   placement variants vs. no-kernel NAFNet and vs. each other (grid);
+* ``ladder``   placement variants vs. the no-kernel backbone (NAFNet, U-Net) and vs. each other (grid);
 * ``mismatch`` mismatch-training variants vs. standard USRNet and vs. EPLL
                (grid, Levin real, Sun);
 * ``probe``    kernel-swap probe: true kernel vs. no-blur and vs. nearest training kernel.
@@ -38,20 +38,24 @@ GRID = {
     "nafnet": [V2 / "m1_nafnet_test.csv", P3 / "nafnet_seed1_test.csv", P3 / "nafnet_seed2_test.csv"],
     "usrnet_full": [V2 / "m3_usrnet_full_test.csv", P3 / "usrnet_full_seed1_test.csv", P3 / "usrnet_full_seed2_test.csv"],
     **{m: [P3 / f"{m}_test.csv", P3 / f"{m}_seed1_test.csv", P3 / f"{m}_seed2_test.csv"]
-       for m in ("nafnet_concat", "nafnet_film", "knafnet")},
-    **{m: [P3 / f"{m}_test.csv"] for m in ("nafnet_unrolled", "usrnet_mm", "usrnet_mm_boundary", "usrnet_mm_knoise")},
+       for m in ("nafnet_concat", "nafnet_film", "knafnet", "nafnet_unrolled")},
+    **{m: [P3 / f"{m}_test.csv"] for m in ("usrnet_mm", "usrnet_mm_boundary", "usrnet_mm_boundary66k", "usrnet_mm_knoise",
+                                           "unet_concat", "unet_film", "kunet")},
+    "unet": [V2 / "m1_unet_test.csv"],
 }
 LADDER_PAIRS = [("nafnet_concat", "nafnet"), ("nafnet_film", "nafnet"), ("knafnet", "nafnet"),
                 ("nafnet_unrolled", "nafnet"), ("knafnet", "nafnet_film"), ("nafnet_unrolled", "knafnet"),
-                ("nafnet_unrolled", "usrnet_full")]
-MISMATCH = ("usrnet_mm_boundary", "usrnet_mm_knoise", "usrnet_mm")
+                ("nafnet_unrolled", "usrnet_full"),
+                ("unet_concat", "unet"), ("unet_film", "unet"), ("kunet", "unet"), ("kunet", "unet_film")]
+MISMATCH = ("usrnet_mm_boundary", "usrnet_mm_boundary66k", "usrnet_mm_knoise", "usrnet_mm")
 PROVIDED = {
     "levin_real": {"usrnet_full": B / "levin_real_est" / "usrnet.csv", "epll": B / "levin_real_est" / "epll.csv",
                    **{m: P3 / f"{m}_levin_real_est.csv" for m in MISMATCH}},
     "sun": {"usrnet_full": B / "sun_provided_est" / "usrnet.csv", "epll": B / "sun_provided_est" / "epll.csv",
             **{m: P3 / f"{m}_sun_est.csv" for m in MISMATCH}},
 }
-PROBE = ("nafnet_concat", "nafnet_film", "knafnet", "nafnet_unrolled", "usrnet_full", "wiener")
+PROBE = ("nafnet_concat", "nafnet_film", "knafnet", "nafnet_unrolled", "usrnet_full", "wiener",
+         "unet_concat", "unet_film", "kunet")
 
 
 def holm(tests: list[dict]) -> None:
@@ -116,6 +120,8 @@ def main() -> None:
                                      unit="test image"))
         for bench, files in PROVIDED.items():
             x = load_provided(files[m])
+            if not x:
+                continue
             for ref in ("usrnet_full", "epll"):
                 y = load_provided(files[ref])
                 keys = sorted(set(x) & set(y))

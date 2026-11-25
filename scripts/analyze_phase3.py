@@ -86,7 +86,7 @@ def main() -> None:
     ladder = {"nafnet": grid(V2 / "m1_nafnet_test_summary.json"),
               "usrnet_full": grid(V2 / "m3_usrnet_full_test_summary.json")}
     for m in ("nafnet_concat", "nafnet_film", "knafnet", "nafnet_unrolled", "usrnet_mm",
-              "usrnet_mm_boundary", "usrnet_mm_knoise"):
+              "usrnet_mm_boundary", "usrnet_mm_boundary66k", "usrnet_mm_knoise"):
         g = grid(P3 / f"{m}_test_summary.json")
         if g:
             g["p2_real"] = (grid(P3 / f"{m}_p2real_summary.json") or {}).get("P2_real")
@@ -101,12 +101,19 @@ def main() -> None:
         "usrnet_full": seeds([V2 / "m3_usrnet_full_test_summary.json"]
                              + [P3 / f"usrnet_full_seed{s}_test_summary.json" for s in (1, 2)]),
     }
-    for m in ("nafnet_concat", "nafnet_film", "knafnet"):
+    for m in ("nafnet_concat", "nafnet_film", "knafnet", "nafnet_unrolled"):
         out["seeds"][m] = seeds([P3 / f"{m}_test_summary.json"] + [P3 / f"{m}_seed{s}_test_summary.json" for s in (1, 2)])
+
+    # second backbone: the ladder on the M1 U-Net
+    lu = {"unet": grid(V2 / "m1_unet_test_summary.json", SETS)}
+    for m in ("unet_concat", "unet_film", "kunet"):
+        lu[m] = grid(P3 / f"{m}_test_summary.json", SETS)
+    out["ladder_unet"] = {k: v for k, v in lu.items() if v}
 
     # kernel-swap probe
     probe = {}
-    for m in ("wiener", "nafnet", "nafnet_concat", "nafnet_film", "knafnet", "nafnet_unrolled", "usrnet_full"):
+    for m in ("wiener", "nafnet", "nafnet_concat", "nafnet_film", "knafnet", "nafnet_unrolled", "usrnet_full",
+              "unet", "unet_concat", "unet_film", "kunet"):
         p = P3 / f"probe_{m}_summary.json"
         if p.exists():
             probe[m] = json.loads(p.read_text())["mean_psnr"]

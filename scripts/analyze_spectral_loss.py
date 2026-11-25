@@ -33,7 +33,8 @@ MODELS = {
     "nafnet": [V2 / "m1_nafnet_test.csv", P3 / "nafnet_seed1_test.csv", P3 / "nafnet_seed2_test.csv"],
     **{m: [P3 / f"{m}_test.csv", P3 / f"{m}_seed1_test.csv", P3 / f"{m}_seed2_test.csv"]
        for m in ("nafnet_concat", "nafnet_film", "knafnet")},
-    "nafnet_unrolled": [P3 / "nafnet_unrolled_test.csv"],
+    "nafnet_unrolled": [P3 / "nafnet_unrolled_test.csv", P3 / "nafnet_unrolled_seed1_test.csv",
+                        P3 / "nafnet_unrolled_seed2_test.csv"],
     "usrnet_full": [V2 / "m3_usrnet_full_test.csv", P3 / "usrnet_full_seed1_test.csv", P3 / "usrnet_full_seed2_test.csv"],
 }
 
