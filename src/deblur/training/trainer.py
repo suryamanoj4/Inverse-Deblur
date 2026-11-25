@@ -49,6 +49,7 @@ class TrainSettings:
     min_learning_rate: float = 1e-7
     amp: bool = False
     log_interval: int = 100
+    stop_at: int | None = None
 
     @classmethod
     def from_protocol(cls, config: ProtocolConfig, arm: str = "m1", **overrides) -> "TrainSettings":
@@ -207,7 +208,8 @@ class Trainer:
         self.model.train()
         running, count, tick = 0.0, 0, time.time()
         stopped_early = False
-        while self.iteration < s.iterations:
+        last = s.iterations if s.stop_at is None else min(s.stop_at, s.iterations)
+        while self.iteration < last:
             batch = self.sampler.sample()
             with torch.autocast(device_type=device_type, dtype=torch.bfloat16, enabled=s.amp):
                 output = self.forward_fn(self.model, batch)
@@ -241,7 +243,7 @@ class Trainer:
                 )
                 running, count, tick = 0.0, 0, time.time()
 
-            if self.iteration % s.val_interval == 0 or self.iteration == s.iterations:
+            if self.iteration % s.val_interval == 0 or self.iteration == last:
                 stopped_early = self._validate()
                 self.save("last.pt", full=True)
                 if stopped_early:

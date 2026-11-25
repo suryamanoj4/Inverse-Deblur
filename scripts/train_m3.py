@@ -92,6 +92,8 @@ def main() -> None:
     smoke.add_argument("--val-interval", type=int, default=None)
     smoke.add_argument("--val-subset-size", type=int, default=None)
     smoke.add_argument("--log-interval", type=int, default=None)
+    smoke.add_argument("--stop-at", type=int, default=None,
+                       help="end the run at this iteration; the LR schedule still spans --iterations")
     args = parser.parse_args()
 
     real_kernel_dirs = tuple(tuple(item.split("=", 1)) for item in args.real_kernels)
@@ -113,6 +115,9 @@ def main() -> None:
         if value is not None and value != getattr(reference, name):
             settings_overrides[name] = value
             deviations[name] = value
+    if args.stop_at is not None:
+        settings_overrides["stop_at"] = args.stop_at
+        deviations["stop_at"] = args.stop_at
     settings = TrainSettings.from_protocol(config, arm=budget_arm, amp=amp, **settings_overrides)
     batch_size = getattr(config, f"{budget_arm}_batch_size")
     train_seed = config.seed if args.seed is None else args.seed

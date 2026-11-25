@@ -1,7 +1,7 @@
 """Unrolled physics-aware networks (M3). Requires PyTorch."""
 from .ista_net import ISTANet
 from .lista import LearnedISTA
-from .placement import KNAFNet, NAFNetConcat, NAFNetFiLM, NAFNetUnrolled
+from .placement import KNAFNet, KUNet, NAFNetConcat, NAFNetFiLM, NAFNetUnrolled, UNetConcat, UNetFiLM
 from .usrnet import USRNet
 
 MODELS = {
@@ -9,6 +9,7 @@ MODELS = {
     # Phase 3 kernel-placement ladder
     "nafnet_concat": NAFNetConcat, "nafnet_film": NAFNetFiLM, "knafnet": KNAFNet,
     "nafnet_unrolled": NAFNetUnrolled,
+    "unet_concat": UNetConcat, "unet_film": UNetFiLM, "kunet": KUNet,
 }
 
 
@@ -19,4 +20,4 @@ def build_model(name: str, **kwargs):
     return MODELS[name](**kwargs)
 
 
-__all__ = ["ISTANet", "KNAFNet", "NAFNetConcat", "NAFNetFiLM", "NAFNetUnrolled", "LearnedISTA", "MODELS", "USRNet", "build_model"]
+__all__ = ["ISTANet", "KNAFNet", "KUNet", "UNetConcat", "UNetFiLM", "NAFNetConcat", "NAFNetFiLM", "NAFNetUnrolled", "LearnedISTA", "MODELS", "USRNet", "build_model"]

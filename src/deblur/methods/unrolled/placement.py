@@ -211,3 +211,100 @@ class NAFNetUnrolled(nn.Module):
             else:
                 z = self.net(x, cond, s_map)
         return z
+
+
+class CondUNet(nn.Module):
+    """M1 U-Net with optional extra input channels and FiLM after every double conv."""
+
+    def __init__(self, extra_in: int = 0, cond_dim: int = 0, width: int = 32, depth: int = 4) -> None:
+        super().__init__()
+        from ..direct.unet import _double_conv
+
+        channels = [width * 2**i for i in range(depth + 1)]
+        self.encoders, self.ups, self.decoders, self.films = (nn.ModuleList() for _ in range(4))
+        self.pool = nn.MaxPool2d(2)
+        cin = 1 + extra_in
+        for c in channels[:-1]:
+            self.encoders.append(_double_conv(cin, c))
+            cin = c
+        self.bottleneck = _double_conv(channels[-2], channels[-1])
+        for c_low, c_high in zip(reversed(channels[:-1]), reversed(channels[1:])):
+            self.ups.append(nn.ConvTranspose2d(c_high, c_low, 2, stride=2))
+            self.decoders.append(_double_conv(2 * c_low, c_low))
+        if cond_dim:
+            for c in channels[:-1] + [channels[-1]] + list(reversed(channels[:-1])):
+                film = nn.Linear(cond_dim, 2 * c)
+                nn.init.zeros_(film.weight)
+                nn.init.zeros_(film.bias)
+                self.films.append(film)
+        self.head = nn.Conv2d(width, 1, 1)
+        self.multiple = 2**depth
+
+    def _mod(self, x: torch.Tensor, i: int, cond: torch.Tensor | None) -> torch.Tensor:
+        if cond is None or not len(self.films):
+            return x
+        gamma, beta = self.films[i](cond).to(x.dtype)[:, :, None, None].chunk(2, dim=1)
+        return x * (1 + gamma) + beta
+
+    def forward(self, inp: torch.Tensor, cond: torch.Tensor | None = None,
+                extra: torch.Tensor | None = None) -> torch.Tensor:
+        H, W = inp.shape[-2:]
+        padded = pad_to_multiple(inp, self.multiple)
+        x = padded if extra is None else torch.cat([padded, pad_to_multiple(extra, self.multiple)], dim=1)
+        skips, i = [], 0
+        for encoder in self.encoders:
+            x = self._mod(encoder(x), i, cond)
+            i += 1
+            skips.append(x)
+            x = self.pool(x)
+        x = self._mod(self.bottleneck(x), i, cond)
+        i += 1
+        for up, decoder, skip in zip(self.ups, self.decoders, reversed(skips)):
+            x = self._mod(decoder(torch.cat([up(x), skip], dim=1)), i, cond)
+            i += 1
+        x = self.head(x) + padded
+        return x[..., :H, :W]
+
+
+class UNetConcat(nn.Module):
+    """U-Net with kernel/sigma maps concatenated to the input."""
+
+    def __init__(self, kernel_size: int = 31, dim: int = 128, maps: int = 15) -> None:
+        super().__init__()
+        self.encoder = KernelEncoder(kernel_size, dim)
+        self.to_maps = nn.Linear(dim, maps)
+        self.net = CondUNet(extra_in=maps + 1)
+
+    def forward(self, y, spectrum, sigma):
+        e = self.to_maps(self.encoder(spectrum, sigma))
+        H, W = y.shape[-2:]
+        maps = e[:, :, None, None].expand(-1, -1, H, W)
+        s = (sigma.reshape(-1, 1, 1, 1) * 255.0 / 25.0).expand(-1, 1, H, W)
+        return self.net(y, extra=torch.cat([maps, s], dim=1).to(y.dtype))
+
+
+class UNetFiLM(nn.Module):
+    """U-Net with FiLM conditioning on kernel and sigma."""
+
+    def __init__(self, kernel_size: int = 31, dim: int = 128) -> None:
+        super().__init__()
+        self.encoder = KernelEncoder(kernel_size, dim)
+        self.net = CondUNet(cond_dim=dim)
+
+    def forward(self, y, spectrum, sigma):
+        return self.net(y, cond=self.encoder(spectrum, sigma))
+
+
+class KUNet(nn.Module):
+    """FiLM U-Net, then one closed-form FFT data-consistency step."""
+
+    def __init__(self, kernel_size: int = 31, dim: int = 128) -> None:
+        super().__init__()
+        self.encoder = KernelEncoder(kernel_size, dim)
+        self.net = CondUNet(cond_dim=dim)
+        self.mu = nn.Sequential(nn.Linear(1, 64), nn.ReLU(), nn.Linear(64, 1))
+
+    def forward(self, y, spectrum, sigma):
+        z = self.net(y, cond=self.encoder(spectrum, sigma))
+        mu = F.softplus(self.mu(sigma.reshape(-1, 1).float() * 255.0 / 25.0)) + 1e-4
+        return data_step(y.float(), spectrum, z.float(), mu.view(-1, 1, 1, 1))
