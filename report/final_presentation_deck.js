@@ -982,7 +982,7 @@ async function build() {
     const vsNaf = { nafnet_concat: "nafnet_concat - nafnet / P2_extrap", nafnet_film: "nafnet_film - nafnet / P2_extrap",
       knafnet: "knafnet - nafnet / P2_extrap", nafnet_unrolled: "nafnet_unrolled - nafnet / P2_extrap",
       usrnet_full: "nafnet_unrolled - usrnet_full / P2_extrap" };
-    s.addTable([hdr(["Variant", "P2-extrap (dB)", "Seeds", "Δ vs no kernel"]),
+    s.addTable([hdr(["Variant", "P2-extrap (dB)", "n", "Δ vs no kernel"]),
       ...rungs.map(([name, m]) => {
         const d = R3(m).P2_extrap - R3("nafnet").P2_extrap;
         return [cell(name, { bold: true, fontSize: 12 }), cell(pm(m, "P2_extrap"), { fontSize: 12 }), cell(String(nSeeds(m)), { align: "center", fontSize: 12 }),
@@ -1027,13 +1027,19 @@ async function build() {
       const u = k === "kunet" ? "kunet" : `unet_${k}`, n = k === "kunet" ? "knafnet" : `nafnet_${k}`;
       return Math.sign(d(u)) === Math.sign(dn(n));
     });
+    const kuFilm = LU.kunet.P2_extrap - LU.unet_film.P2_extrap;
+    const pk = holmP("kunet - unet / P2_extrap");
+    const worth = (m) => PR[m] ? PR[m]["P2_extrap/true"] - PR[m]["P2_extrap/delta"] : null;
     text(s, same ? "Every rung moves in the same direction on both backbones: the effect is not specific to NAFNet."
-      : "The rungs do not all move the same way on U-Net: the effect depends on the backbone (see table).",
-      { x: 7.75, y: 4.3, w: 4.95, h: 1.2, fontSize: 14, bold: true, color: same ? M2 : M1 });
-    text(s, "One seed per U-Net variant.", { x: 7.75, y: 5.6, w: 4.95, h: 0.4, fontSize: 12, color: C.text2 });
+      : `Conditioning hurts on both backbones. The data step beats FiLM by +${f2(kuFilm)} dB, but on U-Net one step only gets back to no kernel (${pText(pk)}).`,
+      { x: 7.75, y: 4.15, w: 4.95, h: 1.4, fontSize: 14, bold: true, color: same ? M2 : M1 });
+    text(s, (worth("kunet") != null && worth("knafnet") != null
+        ? `Probe: the true kernel is worth +${f2(worth("kunet"))} dB to K-U-Net vs +${f2(worth("knafnet"))} to K-NAFNet. ` : "") +
+      "One seed per U-Net variant.", { x: 7.75, y: 5.6, w: 4.95, h: 0.8, fontSize: 12, color: C.text2 });
     s.addNotes("A reviewer's first question is whether the ladder is a NAFNet quirk. We repeated it on the plain U-Net from M1, " +
       "with the same three ways of adding the kernel and the same training budget. The table compares the change on unseen families " +
-      "for each rung on both backbones.");
+      "for each rung on both backbones. Input maps and FiLM hurt on both. On U-Net a single data step recovers what FiLM loses " +
+      "but no more: it collapses on defocus and excels on ghosting, so one step is not enough, the same lesson as K-NAFNet's remaining drop.");
   }
 
   // P3-3: kernel-swap probe

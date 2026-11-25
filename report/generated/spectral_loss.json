@@ -16,8 +16,8 @@
    "loss": 0.0,
    "nafnet_psnr": 20.204044686312994,
    "gain_nafnet_concat": -0.772109430763134,
-   "gain_nafnet_film": -0.7906405032889836,
-   "gain_knafnet": 7.836949804893504,
+   "gain_nafnet_film": -0.8235060040242033,
+   "gain_knafnet": 7.834941626592077,
    "gain_nafnet_unrolled": 12.62378027131314,
    "gain_usrnet_full": 12.579346492387206
   },
@@ -31,8 +31,8 @@
    "loss": 0.138519287109375,
    "nafnet_psnr": 17.746521152826105,
    "gain_nafnet_concat": -0.22162329829562566,
-   "gain_nafnet_film": -0.1528338926694559,
-   "gain_knafnet": 8.068135646484336,
+   "gain_nafnet_film": -0.1677573994519328,
+   "gain_knafnet": 8.08242580701491,
    "gain_nafnet_unrolled": 13.93742986100769,
    "gain_usrnet_full": 13.690940682072291
   },
@@ -46,8 +46,8 @@
    "loss": 0.1727142333984375,
    "nafnet_psnr": 19.86069105793972,
    "gain_nafnet_concat": -1.4617634709733025,
-   "gain_nafnet_film": -1.512628937143237,
-   "gain_knafnet": 6.160923338454268,
+   "gain_nafnet_film": -1.6165866258538202,
+   "gain_knafnet": 6.1668933999243265,
    "gain_nafnet_unrolled": 11.514525356544649,
    "gain_usrnet_full": 11.38321555726263
   },
@@ -61,8 +61,8 @@
    "loss": 0.2186279296875,
    "nafnet_psnr": 22.084103897743617,
    "gain_nafnet_concat": -0.6745105916125596,
-   "gain_nafnet_film": -0.6135273579595726,
-   "gain_knafnet": 4.933235185926311,
+   "gain_nafnet_film": -0.8488168021714131,
+   "gain_knafnet": 5.083444211336339,
    "gain_nafnet_unrolled": 9.139583111710973,
    "gain_usrnet_full": 8.916949205034754
   },
@@ -76,8 +76,8 @@
    "loss": 0.6704559326171875,
    "nafnet_psnr": 24.45760454305355,
    "gain_nafnet_concat": -1.4483841910978725,
-   "gain_nafnet_film": -0.5836992062019846,
-   "gain_knafnet": 1.3563239307585668,
+   "gain_nafnet_film": -0.9395469972301242,
+   "gain_knafnet": 1.3908350866491297,
    "gain_nafnet_unrolled": 3.3605163001987606,
    "gain_usrnet_full": 3.3005659701156667
   },
@@ -91,8 +91,8 @@
    "loss": 0.8373870849609375,
    "nafnet_psnr": 22.472791758202145,
    "gain_nafnet_concat": -0.5254523490752732,
-   "gain_nafnet_film": -2.110042336776342,
-   "gain_knafnet": 1.4237533474243556,
+   "gain_nafnet_film": -1.977117895879907,
+   "gain_knafnet": 1.5019026502092458,
    "gain_nafnet_unrolled": 4.067935069202971,
    "gain_usrnet_full": 4.135994775409095
   },
@@ -106,8 +106,8 @@
    "loss": 0.9078826904296875,
    "nafnet_psnr": 23.059026683958212,
    "gain_nafnet_concat": -1.6432409901769134,
-   "gain_nafnet_film": -5.966200971498221,
-   "gain_knafnet": -0.5635181272316991,
+   "gain_nafnet_film": -5.583557398833424,
+   "gain_knafnet": -0.4299642222024218,
    "gain_nafnet_unrolled": 2.2791748409571895,
    "gain_usrnet_full": 2.6587086577098873
   },
@@ -121,8 +121,8 @@
    "loss": 0.9207000732421875,
    "nafnet_psnr": 23.79724677111724,
    "gain_nafnet_concat": -1.5935504123569117,
-   "gain_nafnet_film": -2.5791471277249762,
-   "gain_knafnet": -0.07455802515177723,
+   "gain_nafnet_film": -2.517410376678999,
+   "gain_knafnet": 0.0337298721056456,
    "gain_nafnet_unrolled": 2.2621836194837392,
    "gain_usrnet_full": 2.232539717349699
   },
@@ -136,8 +136,8 @@
    "loss": 0.9406585693359375,
    "nafnet_psnr": 22.86346172492992,
    "gain_nafnet_concat": -3.6953761114083434,
-   "gain_nafnet_film": -11.357718577757556,
-   "gain_knafnet": -4.429320082902688,
+   "gain_nafnet_film": -13.010443105022436,
+   "gain_knafnet": -4.6795229231993645,
    "gain_nafnet_unrolled": 1.9279848190017859,
    "gain_usrnet_full": 2.2174063084474263
   },
@@ -151,8 +151,8 @@
    "loss": 0.9581756591796875,
    "nafnet_psnr": 22.874461648016368,
    "gain_nafnet_concat": -0.6886578354644683,
-   "gain_nafnet_film": -4.141194593308899,
-   "gain_knafnet": -0.8697284671225525,
+   "gain_nafnet_film": -4.433723696201724,
+   "gain_knafnet": -0.4544345685585469,
    "gain_nafnet_unrolled": 2.134518946597723,
    "gain_usrnet_full": 2.1829352948825758
   },
@@ -166,8 +166,8 @@
    "loss": 0.9745330810546875,
    "nafnet_psnr": 22.29185528764727,
    "gain_nafnet_concat": -0.5819452291499125,
-   "gain_nafnet_film": -10.960506470696188,
-   "gain_knafnet": -2.1930649544243117,
+   "gain_nafnet_film": -10.900713600895731,
+   "gain_knafnet": -1.8119967561691688,
    "gain_nafnet_unrolled": 2.03745248537534,
    "gain_usrnet_full": 2.0636516953621644
   },
@@ -181,8 +181,8 @@
    "loss": 0.9829559326171875,
    "nafnet_psnr": 21.943458142208854,
    "gain_nafnet_concat": -1.0155399153495814,
-   "gain_nafnet_film": -13.038647587015632,
-   "gain_knafnet": -5.145325181758665,
+   "gain_nafnet_film": -14.083641337328888,
+   "gain_knafnet": -4.953448045073728,
    "gain_nafnet_unrolled": 1.9248086171871002,
    "gain_usrnet_full": 1.88202744878458
   }
@@ -194,8 +194,8 @@
    "n": 12
   },
   "nafnet_film": {
-   "rho": -0.8671328671328673,
-   "p": 0.00025981184986148103,
+   "rho": -0.9230769230769231,
+   "p": 1.8621951098680993e-05,
    "n": 12
   },
   "knafnet": {
