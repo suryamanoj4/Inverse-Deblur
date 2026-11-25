@@ -209,8 +209,8 @@ async function build() {
     const ext = (m) => (SD0[m] ? SD0[m].mean : L0[m]).P2_extrap;
     const rows = [
       ["Data-only net vs. classical solver, training kernels", `Tied in PSNR (${f2(numbers.mismatch.nafnet.P1)} vs ${f2(numbers.mismatch.epll.P1)} dB); NAFNet better perceptually`, "Tie", AMBER],
-      ["…on kernels it never saw", "NAFNet loses half its gain; ADMM-EPLL wins every unseen-kernel cell, by up to 6.4 dB", "M2 wins", M2],
-      ["Deep prior inside the solver (USRNet)", `Best everywhere; no drop on unseen families (${f2(SD0.usrnet_full.mean.P1)} → ${f2(SD0.usrnet_full.mean.P2_extrap)} dB)`, "M3 wins", M3],
+      ["…on kernels it never saw", "Protocol v1: NAFNet loses half its gain; ADMM-EPLL wins every unseen-kernel cell, by up to 6.4 dB", "M2 wins", M2],
+      ["Deep prior inside the solver (USRNet)", `Best on the synthetic grid (${f2(SD0.usrnet_full.mean.P1)} / ${f2(SD0.usrnet_full.mean.P2_extrap)} dB); real photos need boundary-aware training`, "M3 wins", M3],
       ["Just give the network the kernel?", `Worse on unseen families than no kernel: ${f2(ext("nafnet_film") - ext("nafnet"))} dB (FiLM), ${f2(ext("nafnet_concat") - ext("nafnet"))} dB (input maps)`, "Hurts", M1],
       ["Why?", "Kernel-swap probe: conditioned nets use the kernel as a lookup key; a data step makes it physics", "Mechanism", M2],
     ];
@@ -226,7 +226,8 @@ async function build() {
       { x: 0.85, y: 6.3, w: 11.6, h: 0.5, fontSize: 16, bold: true, color: C.background1, valign: "middle" });
   }
   s.addNotes("If you remember one slide, it is this one. On training kernels the data-only network and the classical solver tie. " +
-    "On unseen kernels the solver wins. Putting a deep prior inside the solver, as USRNet does, is best everywhere. " +
+    "On unseen kernels the solver wins. Putting a deep prior inside the solver, as USRNet does, is best on the synthetic grid; " +
+    "on real photos it first needs to see realistic image boundaries in training. " +
     "But simply handing the kernel to a network as an input makes unseen blur worse, and the kernel-swap probe shows why.");
 
   // 3. Problem -------------------------------------------------------------
@@ -996,7 +997,7 @@ async function build() {
   }
   s.addNotes("The ladder keeps everything fixed except where the kernel enters. Giving the network the kernel as input maps or FiLM " +
     "buys about 0.6 dB on training families and costs 1.2 and several dB on unseen families: worse than no kernel at all. " +
-    "A single FFT data step turns the kernel into a help; four unrolled stages remove the unseen-family drop and tie with USRNet, so USRNet's " +
+    "A single FFT data step turns the kernel into a help; four unrolled stages lose nothing on unseen families relative to USRNet and tie with it, so USRNet's " +
     "advantage is the placement, not its particular architecture. Errors are standard deviations over training seeds; tests pair test images.");
 
   // P3-2b: U-Net ladder (only once the second-backbone runs exist)
@@ -1185,7 +1186,7 @@ async function build() {
   {
     const ext = (m) => R3(m).P2_extrap;
     const claims = [
-      [fa.FaColumns, "Physics transfers, data alone does not", `Data-only nets tie classical solvers on training kernels and lose on unseen ones; USRNet is best on every set (${f2(R3("usrnet_full").P1)} / ${f2(R3("usrnet_full").P2_extrap)} dB)`, M2],
+      [fa.FaColumns, "Physics transfers, data alone does not", `Data-only nets tie classical solvers on training kernels and lose on unseen ones; USRNet is best on the synthetic grid (${f2(R3("usrnet_full").P1)} / ${f2(R3("usrnet_full").P2_extrap)} dB), not on real photos without boundary-aware training`, M2],
       [fa.FaLayerGroup, "Placement, not presence, of the kernel", `Input maps ${f2(ext("nafnet_concat") - ext("nafnet"))} dB and FiLM ${f2(ext("nafnet_film") - ext("nafnet"))} dB on unseen families; one data step +${f2(ext("knafnet") - ext("nafnet"))}; unrolling +${f2(ext("nafnet_unrolled") - ext("nafnet"))}, tied with USRNet`, M3],
       [fa.FaSearch, "Mechanism: a lookup key vs. a forward model", "Conditioned nets can score higher with a wrong kernel; through a data step the true kernel is worth +3 to +7 dB, like Wiener", AMBER],
       [fa.FaLightbulb, "For real captures, simulate realistic boundaries", "Boundary-aware training fixes Levin's largest kernels at no grid cost (known in spirit: Nan & Ji 2020)", M1],
