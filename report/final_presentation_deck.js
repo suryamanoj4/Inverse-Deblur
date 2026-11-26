@@ -933,6 +933,9 @@ async function build() {
     const t = stats3.families.ladder.find((x) => x.name === name);
     return t ? t.p_holm : null;
   };
+  const uvu = stats3.families.ladder.find((x) => x.name === "nafnet_unrolled - usrnet_full / P2_extrap");
+  const uTie = !uvu || uvu.p_holm > 0.05;
+  const uGap = uvu ? uvu.mean_diff_db : 0;
   const pText = (p) => (p == null ? "–" : p < 1e-3 ? `p < 10⁻${Math.floor(-Math.log10(p))}` : `p = ${p.toFixed(2)}`);
   const TABLE = { fontSize: 13, color: C.text1, border: { type: "solid", pt: 0.5, color: "D5DAE1" }, valign: "middle",
     fill: { color: C.background1 }, margin: 0.06 };
@@ -992,13 +995,16 @@ async function build() {
     const pc = holmP(vsNaf.nafnet_concat), pf = holmP(vsNaf.nafnet_film), pu = holmP(vsNaf.usrnet_full);
     bullets(s, [
       `Both conditioned variants are below no kernel on unseen families (Holm ${pText(Math.max(pc, pf))}, 200 test images)`,
-      `Unrolled vs USRNet on P2-extrap: ${pText(pu)}, a tie: the placement, not USRNet's architecture, carries the gain`,
+      uTie ? `Unrolled vs USRNet on P2-extrap: ${pText(pu)}, a tie: the placement, not USRNet's architecture, carries the gain`
+        : `Unrolled vs USRNet on P2-extrap: ${uGap >= 0 ? "+" : ""}${f2(uGap)} dB (${pText(pu)}): the placement carries most of the gain, not all`,
     ], { x: 7.75, y: 5.5, w: 4.95, h: 1.3, fontSize: 12, color: C.text2 });
   }
   s.addNotes("The ladder keeps everything fixed except where the kernel enters. Giving the network the kernel as input maps or FiLM " +
     "buys about 0.6 dB on training families and costs 1.2 and several dB on unseen families: worse than no kernel at all. " +
-    "A single FFT data step turns the kernel into a help; four unrolled stages lose nothing on unseen families relative to USRNet and tie with it, so USRNet's " +
-    "advantage is the placement, not its particular architecture. Errors are standard deviations over training seeds; tests pair test images.");
+    "A single FFT data step turns the kernel into a help; four unrolled stages close almost all of the gap to USRNet on unseen families " +
+    (uTie ? "and tie with it, so USRNet's advantage is the placement, not its particular architecture. "
+      : `(${f2(uGap)} dB, significant over 200 images), so the placement carries most of the gain; the two unrolled seeds differ by ${f2(SD.nafnet_unrolled ? SD.nafnet_unrolled.std.P2_extrap * Math.SQRT2 : 0)} dB on unseen families. `) +
+    "Errors are standard deviations over training seeds; tests pair test images.");
 
   // P3-2b: U-Net ladder (only once the second-backbone runs exist)
   if (LU.unet && LU.unet_concat && LU.unet_film && LU.kunet) {
@@ -1141,7 +1147,8 @@ async function build() {
       ["Likely new (not found in our review)", M2, [
         "Kernel conditioning (input maps, FiLM) makes unseen-family deblurring worse than no kernel",
         "Kernel-swap probe: the true kernel can score below a wrong one, so the net uses it as a key",
-        "Controlled placement ladder on one backbone; unrolling with a generic prior ties with USRNet",
+        uTie ? "Controlled placement ladder on one backbone; unrolling with a generic prior ties with USRNet"
+          : "Controlled placement ladder on one backbone; unrolling with a generic prior comes within a few tenths of a dB of USRNet",
         "Worth of the kernel tracks its spectral loss (Spearman ρ ≈ −0.9 to −0.99)",
         "Held-out-family protocol (defocus, ring, ghost) with paired statistics",
       ]],
@@ -1193,7 +1200,7 @@ async function build() {
     const ext = (m) => R3(m).P2_extrap;
     const claims = [
       [fa.FaColumns, "Physics transfers, data alone does not", `Data-only nets tie classical solvers on training kernels and lose on unseen ones; USRNet is best on the synthetic grid (${f2(R3("usrnet_full").P1)} / ${f2(R3("usrnet_full").P2_extrap)} dB), not on real photos without boundary-aware training`, M2],
-      [fa.FaLayerGroup, "Placement, not presence, of the kernel", `Input maps ${f2(ext("nafnet_concat") - ext("nafnet"))} dB and FiLM ${f2(ext("nafnet_film") - ext("nafnet"))} dB on unseen families; one data step +${f2(ext("knafnet") - ext("nafnet"))}; unrolling +${f2(ext("nafnet_unrolled") - ext("nafnet"))}, tied with USRNet`, M3],
+      [fa.FaLayerGroup, "Placement, not presence, of the kernel", `Input maps ${f2(ext("nafnet_concat") - ext("nafnet"))} dB and FiLM ${f2(ext("nafnet_film") - ext("nafnet"))} dB on unseen families; one data step +${f2(ext("knafnet") - ext("nafnet"))}; unrolling +${f2(ext("nafnet_unrolled") - ext("nafnet"))}, ${uTie ? "tied with USRNet" : `${f2(-uGap)} dB short of USRNet`}`, M3],
       [fa.FaSearch, "Mechanism: a lookup key vs. a forward model", "Conditioned nets can score higher with a wrong kernel; through a data step the true kernel is worth +3 to +7 dB, like Wiener", AMBER],
       [fa.FaLightbulb, "For real captures, simulate realistic boundaries", "Boundary-aware training fixes Levin's largest kernels at no grid cost (known in spirit: Nan & Ji 2020)", M1],
     ];
