@@ -952,7 +952,7 @@ async function build() {
       ["Placement", "Unrolled NAFNet: no drop on unseen families, ≥ one-step K-NAFNet everywhere",
         `${f2(R3("nafnet_unrolled").P2_extrap)} dB extrap vs ${f2(R3("nafnet_unrolled").P1)} P1; above K-NAFNet on every set`, "Holds", M2],
       ["Placement", "One FFT data step (K-NAFNet) removes the unseen-family drop (< 0.5 dB)",
-        L.nafnet_dc ? `Drop ${f2(R3("knafnet").P1 - R3("knafnet").P2_extrap)} dB; without FiLM only ${f2(L.nafnet_dc.P1 - L.nafnet_dc.P2_extrap)}: conditioning causes most of it`
+        L.nafnet_dc ? `Drop ${f2(R3("knafnet").P1 - R3("knafnet").P2_extrap)} dB; without FiLM only ${f2(R3("nafnet_dc").P1 - R3("nafnet_dc").P2_extrap)}: conditioning causes most of it`
           : `Drop is still ${f2(R3("knafnet").P1 - R3("knafnet").P2_extrap)} dB: one step is not enough`, "Fails", M1],
       ["Mismatch training", "USRNet gains ≥ 0.5 dB on real-kernel benchmarks, loses ≤ 0.2 dB on the grid",
         `Levin real +${f2(L.usrnet_mm.levin_real.all - L.usrnet_full.levin_real.all)}, Sun +${f2(L.usrnet_mm.sun - BM.usrnet.sun)}; grid −${f2(L.usrnet_full.P1 - L.usrnet_mm.P1)}`, "Holds", M2],
@@ -1003,7 +1003,7 @@ async function build() {
       `Both conditioned variants are below no kernel on unseen families (Holm ${pText(Math.max(pc, pf))}, 200 test images)`,
       uTie ? `Unrolled vs USRNet on P2-extrap: ${pText(pu)}, a tie: the placement, not USRNet's architecture, carries the gain`
         : `Unrolled vs USRNet on P2-extrap: ${uGap >= 0 ? "+" : ""}${f2(uGap)} dB (${pText(pu)}): the placement carries most of the gain, not all`,
-      ...(L.nafnet_dc ? [`One data step without FiLM beats FiLM + the step by ${f2(L.nafnet_dc.P2_extrap - R3("knafnet").P2_extrap)} dB (${pText(pdc)}; 1 seed)`] : []),
+      ...(L.nafnet_dc ? [`One data step without FiLM beats FiLM + the step by ${f2(R3("nafnet_dc").P2_extrap - R3("knafnet").P2_extrap)} dB (${pText(pdc)}; ${nSeeds("nafnet_dc")} seed${nSeeds("nafnet_dc") > 1 ? "s" : ""})`] : []),
     ], { x: 7.75, y: L.nafnet_dc ? 5.35 : 5.5, w: 4.95, h: L.nafnet_dc ? 1.55 : 1.3, fontSize: 12, color: C.text2 });
   }
   s.addNotes("The ladder keeps everything fixed except where the kernel enters. Giving the network the kernel as input maps or FiLM " +
@@ -1212,7 +1212,7 @@ async function build() {
     const ext = (m) => R3(m).P2_extrap;
     const claims = [
       [fa.FaColumns, "Physics transfers, data alone does not", `Data-only nets tie classical solvers on training kernels and lose on unseen ones; USRNet is best on the synthetic grid (${f2(R3("usrnet_full").P1)} / ${f2(R3("usrnet_full").P2_extrap)} dB), not on real photos without boundary-aware training`, M2],
-      [fa.FaLayerGroup, "Placement, not presence, of the kernel", `Input maps ${f2(ext("nafnet_concat") - ext("nafnet"))} dB and FiLM ${f2(ext("nafnet_film") - ext("nafnet"))} dB on unseen families; ${L.nafnet_dc ? `one data step alone +${f2(L.nafnet_dc.P2_extrap - ext("nafnet"))}, with FiLM +${f2(ext("knafnet") - ext("nafnet"))}` : `one data step +${f2(ext("knafnet") - ext("nafnet"))}`}; unrolling +${f2(ext("nafnet_unrolled") - ext("nafnet"))}, ${uTie ? "tied with USRNet" : `${f2(-uGap)} dB short of USRNet`}`, M3],
+      [fa.FaLayerGroup, "Placement, not presence, of the kernel", `Input maps ${f2(ext("nafnet_concat") - ext("nafnet"))} dB and FiLM ${f2(ext("nafnet_film") - ext("nafnet"))} dB on unseen families; ${L.nafnet_dc ? `one data step alone +${f2(R3("nafnet_dc").P2_extrap - ext("nafnet"))}, with FiLM +${f2(ext("knafnet") - ext("nafnet"))}` : `one data step +${f2(ext("knafnet") - ext("nafnet"))}`}; unrolling +${f2(ext("nafnet_unrolled") - ext("nafnet"))}, ${uTie ? "tied with USRNet" : `${f2(-uGap)} dB short of USRNet`}`, M3],
       [fa.FaSearch, "Mechanism: a lookup key vs. a forward model", "Conditioned nets can score higher with a wrong kernel; through a data step the true kernel is worth +3 to +7 dB, like Wiener", AMBER],
       [fa.FaLightbulb, "For real captures, simulate realistic boundaries", "Boundary-aware training fixes Levin's largest kernels at no grid cost (known in spirit: Nan & Ji 2020)", M1],
     ];
@@ -1234,7 +1234,7 @@ async function build() {
       "Our own reimplementations, trained on grayscale BSDS500 (200 images); no official pretrained weights",
       LU.kunet ? "Two backbones (NAFNet, U-Net); the U-Net ladder has one seed per variant" : "One backbone for the placement ladder (NAFNet)",
       `Seeds: ${nSeeds("nafnet_concat")} for input maps, ${nSeeds("nafnet_film")} for FiLM, ${nSeeds("knafnet")} for K-NAFNet, ${nSeeds("nafnet_unrolled")} for the unrolled net`,
-      ...(L.nafnet_dc ? ["One seed for the data-step-only rung and K-NAFNet + mismatch; the unrolled net keeps FiLM, which may cost it part of its gap to USRNet"] : []),
+      ...(L.nafnet_dc ? [`${nSeeds("nafnet_dc") > 1 ? `${nSeeds("nafnet_dc")} seeds for the data-step-only rung, one for K-NAFNet + mismatch` : "One seed for the data-step-only rung and K-NAFNet + mismatch"}; the unrolled net keeps FiLM, which may cost it part of its gap to USRNet`] : []),
       "Spectral loss and kernel size are correlated over only 12 unseen kernels",
       "Non-blind only: the true kernel is given; H3 uses a transfer attack, not a white-box attack on M2",
     ];

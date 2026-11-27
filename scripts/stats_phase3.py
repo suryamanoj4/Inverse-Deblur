@@ -38,9 +38,9 @@ GRID = {
     "nafnet": [V2 / "m1_nafnet_test.csv", P3 / "nafnet_seed1_test.csv", P3 / "nafnet_seed2_test.csv"],
     "usrnet_full": [V2 / "m3_usrnet_full_test.csv", P3 / "usrnet_full_seed1_test.csv", P3 / "usrnet_full_seed2_test.csv"],
     **{m: [P3 / f"{m}_test.csv", P3 / f"{m}_seed1_test.csv", P3 / f"{m}_seed2_test.csv"]
-       for m in ("nafnet_concat", "nafnet_film", "knafnet", "nafnet_unrolled")},
+       for m in ("nafnet_concat", "nafnet_film", "knafnet", "nafnet_unrolled", "nafnet_dc")},
     **{m: [P3 / f"{m}_test.csv"] for m in ("usrnet_mm", "usrnet_mm_boundary", "usrnet_mm_boundary66k", "usrnet_mm_knoise",
-                                           "unet_concat", "unet_film", "kunet", "nafnet_dc", "knafnet_mm")},
+                                           "unet_concat", "unet_film", "kunet", "knafnet_mm")},
     "unet": [V2 / "m1_unet_test.csv"],
 }
 LADDER_PAIRS = [("nafnet_concat", "nafnet"), ("nafnet_film", "nafnet"), ("knafnet", "nafnet"),

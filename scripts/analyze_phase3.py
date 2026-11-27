@@ -101,7 +101,7 @@ def main() -> None:
         "usrnet_full": seeds([V2 / "m3_usrnet_full_test_summary.json"]
                              + [P3 / f"usrnet_full_seed{s}_test_summary.json" for s in (1, 2)]),
     }
-    for m in ("nafnet_concat", "nafnet_film", "knafnet", "nafnet_unrolled"):
+    for m in ("nafnet_concat", "nafnet_film", "knafnet", "nafnet_unrolled", "nafnet_dc"):
         out["seeds"][m] = seeds([P3 / f"{m}_test_summary.json"] + [P3 / f"{m}_seed{s}_test_summary.json" for s in (1, 2)])
 
     # second backbone: the ladder on the M1 U-Net
