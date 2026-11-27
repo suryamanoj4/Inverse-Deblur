@@ -212,7 +212,8 @@ async function build() {
       ["…on kernels it never saw", "Protocol v1: NAFNet loses half its gain; ADMM-EPLL wins every unseen-kernel cell, by up to 6.4 dB", "M2 wins", M2],
       ["Deep prior inside the solver (USRNet)", `Best on the synthetic grid (${f2(SD0.usrnet_full.mean.P1)} / ${f2(SD0.usrnet_full.mean.P2_extrap)} dB); real photos need boundary-aware training`, "M3 wins", M3],
       ["Just give the network the kernel?", `Worse on unseen families than no kernel: ${f2(ext("nafnet_film") - ext("nafnet"))} dB (FiLM), ${f2(ext("nafnet_concat") - ext("nafnet"))} dB (input maps)`, "Hurts", M1],
-      ["Why?", "Kernel-swap probe: conditioned nets use the kernel as a lookup key; a data step makes it physics", "Mechanism", M2],
+      ["Why?", L0.nafnet_dc ? `Conditioned nets use the kernel as a lookup key; plain net + one data step: +${f2(ext("nafnet_dc") - ext("nafnet"))} dB unseen`
+        : "Kernel-swap probe: conditioned nets use the kernel as a lookup key; a data step makes it physics", "Mechanism", M2],
     ];
     for (let i = 0; i < rows.length; i++) {
       const y = 1.45 + i * 0.95;
@@ -951,7 +952,8 @@ async function build() {
       ["Placement", "Unrolled NAFNet: no drop on unseen families, ≥ one-step K-NAFNet everywhere",
         `${f2(R3("nafnet_unrolled").P2_extrap)} dB extrap vs ${f2(R3("nafnet_unrolled").P1)} P1; above K-NAFNet on every set`, "Holds", M2],
       ["Placement", "One FFT data step (K-NAFNet) removes the unseen-family drop (< 0.5 dB)",
-        `Drop is still ${f2(R3("knafnet").P1 - R3("knafnet").P2_extrap)} dB: one step is not enough`, "Fails", M1],
+        L.nafnet_dc ? `Drop ${f2(R3("knafnet").P1 - R3("knafnet").P2_extrap)} dB; without FiLM only ${f2(L.nafnet_dc.P1 - L.nafnet_dc.P2_extrap)}: conditioning causes most of it`
+          : `Drop is still ${f2(R3("knafnet").P1 - R3("knafnet").P2_extrap)} dB: one step is not enough`, "Fails", M1],
       ["Mismatch training", "USRNet gains ≥ 0.5 dB on real-kernel benchmarks, loses ≤ 0.2 dB on the grid",
         `Levin real +${f2(L.usrnet_mm.levin_real.all - L.usrnet_full.levin_real.all)}, Sun +${f2(L.usrnet_mm.sun - BM.usrnet.sun)}; grid −${f2(L.usrnet_full.P1 - L.usrnet_mm.P1)}`, "Holds", M2],
       ["Control", "On circular Sun (exact forward model) USRNet ≥ EPLL",
@@ -971,6 +973,7 @@ async function build() {
   s = content("Where the kernel enters, not whether it does", "Phase 3 results");
   {
     const rungs = [["No kernel (NAFNet)", "nafnet"], ["Kernel as input maps", "nafnet_concat"], ["FiLM in every block", "nafnet_film"],
+      ...(L.nafnet_dc ? [["One FFT data step, no FiLM", "nafnet_dc"]] : []),
       ["FiLM + one FFT data step", "knafnet"], ["4-stage unrolled", "nafnet_unrolled"], ["USRNet (reference)", "usrnet_full"]];
     text(s, "One NAFNet backbone, data and budget; only the kernel's entry changes (PSNR, σ > 0, mean over seeds)",
       { x: 0.6, y: 1.35, w: 12.1, h: 0.4, fontSize: 14, bold: true });
@@ -985,19 +988,23 @@ async function build() {
     const vsNaf = { nafnet_concat: "nafnet_concat - nafnet / P2_extrap", nafnet_film: "nafnet_film - nafnet / P2_extrap",
       knafnet: "knafnet - nafnet / P2_extrap", nafnet_unrolled: "nafnet_unrolled - nafnet / P2_extrap",
       usrnet_full: "nafnet_unrolled - usrnet_full / P2_extrap" };
+    const SHORT = { nafnet: "No kernel", nafnet_concat: "Input maps", nafnet_film: "FiLM", nafnet_dc: "Data step, no FiLM",
+      knafnet: "FiLM + data step", nafnet_unrolled: "4-stage unrolled", usrnet_full: "USRNet" };
     s.addTable([hdr(["Variant", "P2-extrap (dB)", "n", "Δ vs no kernel"]),
-      ...rungs.map(([name, m]) => {
+      ...rungs.map(([, m]) => [SHORT[m], m]).map(([name, m]) => {
         const d = R3(m).P2_extrap - R3("nafnet").P2_extrap;
         return [cell(name, { bold: true, fontSize: 12 }), cell(pm(m, "P2_extrap"), { fontSize: 12 }), cell(String(nSeeds(m)), { align: "center", fontSize: 12 }),
           cell(m === "nafnet" ? "–" : `${d >= 0 ? "+" : ""}${f2(d)}`, { bold: true, fontSize: 12, color: d < 0 ? M1 : M2 })];
       })],
-      { x: 7.75, y: 1.85, w: 4.95, colW: [1.85, 1.35, 0.7, 1.05], rowH: 0.5, ...TABLE });
+      { x: 7.75, y: 1.85, w: 4.95, colW: [1.85, 1.35, 0.7, 1.05], rowH: L.nafnet_dc ? 0.4 : 0.5, ...TABLE });
+    const pdc = holmP("knafnet - nafnet_dc / P2_extrap");
     const pc = holmP(vsNaf.nafnet_concat), pf = holmP(vsNaf.nafnet_film), pu = holmP(vsNaf.usrnet_full);
     bullets(s, [
       `Both conditioned variants are below no kernel on unseen families (Holm ${pText(Math.max(pc, pf))}, 200 test images)`,
       uTie ? `Unrolled vs USRNet on P2-extrap: ${pText(pu)}, a tie: the placement, not USRNet's architecture, carries the gain`
         : `Unrolled vs USRNet on P2-extrap: ${uGap >= 0 ? "+" : ""}${f2(uGap)} dB (${pText(pu)}): the placement carries most of the gain, not all`,
-    ], { x: 7.75, y: 5.5, w: 4.95, h: 1.3, fontSize: 12, color: C.text2 });
+      ...(L.nafnet_dc ? [`One data step without FiLM beats FiLM + the step by ${f2(L.nafnet_dc.P2_extrap - R3("knafnet").P2_extrap)} dB (${pText(pdc)}; 1 seed)`] : []),
+    ], { x: 7.75, y: L.nafnet_dc ? 5.35 : 5.5, w: 4.95, h: L.nafnet_dc ? 1.55 : 1.3, fontSize: 12, color: C.text2 });
   }
   s.addNotes("The ladder keeps everything fixed except where the kernel enters. Giving the network the kernel as input maps or FiLM " +
     "buys about 0.6 dB on training families and costs 1.2 and several dB on unseen families: worse than no kernel at all. " +
@@ -1052,7 +1059,8 @@ async function build() {
   s = content("Kernel-swap probe: the kernel becomes a lookup key", "Phase 3 results");
   {
     const methods = [["Wiener (physics)", "wiener"], ["NAFNet (no kernel)", "nafnet"], ["Input maps", "nafnet_concat"],
-      ["FiLM every block", "nafnet_film"], ["K-NAFNet (1 step)", "knafnet"], ["Unrolled NAFNet", "nafnet_unrolled"], ["USRNet", "usrnet_full"]];
+      ["FiLM every block", "nafnet_film"], ...(PR.nafnet_dc ? [["Data step, no FiLM", "nafnet_dc"]] : []),
+      ["K-NAFNet (1 step)", "knafnet"], ["Unrolled NAFNet", "nafnet_unrolled"], ["USRNet", "usrnet_full"]];
     const e = (m, c) => PR[m][`P2_extrap/${c}`];
     const gain = (m) => e(m, "true") - Math.max(e(m, "nearest"), e(m, "random"), e(m, "delta"));
     text(s, "Unseen families: blur with the true kernel, then tell the method a true, nearest-training or no-blur kernel",
@@ -1063,7 +1071,7 @@ async function build() {
         return [cell(name, { bold: true }), cell(e(m, "true")), cell(e(m, "nearest")), cell(e(m, "delta")),
           cell((g >= 0 ? "+" : "") + f2(g) + " dB", { bold: true, color: g < 0 ? M1 : g > 1 ? M2 : HEX.dk2 })];
       })],
-      { x: 0.6, y: 1.85, w: 8.2, colW: [2.2, 1.4, 1.6, 1.5, 1.5], rowH: 0.5, ...TABLE });
+      { x: 0.6, y: 1.85, w: 8.2, colW: [2.2, 1.4, 1.6, 1.5, 1.5], rowH: PR.nafnet_dc ? 0.47 : 0.5, ...TABLE });
     card(s, 9.1, 1.85, 3.6, 4.2, { name: "probe takeaway" });
     text(s, "Reading it", { x: 9.35, y: 2.0, w: 3.1, h: 0.4, fontSize: 16, bold: true, color: AMBER });
     bullets(s, [
@@ -1117,16 +1125,19 @@ async function build() {
       ["+ realistic boundaries", L.usrnet_mm_boundary, L.usrnet_mm_boundary.sun, L.usrnet_mm_boundary.sun_circular],
       ...(has66 ? [["  same, stopped at 66k", L.usrnet_mm_boundary66k, L.usrnet_mm_boundary66k.sun, L.usrnet_mm_boundary66k.sun_circular]] : []),
       ["+ kernel noise", L.usrnet_mm_knoise, L.usrnet_mm_knoise.sun, L.usrnet_mm_knoise.sun_circular],
-      ["+ both", L.usrnet_mm, L.usrnet_mm.sun, L.usrnet_mm.sun_circular]];
+      ["+ both", L.usrnet_mm, L.usrnet_mm.sun, L.usrnet_mm.sun_circular],
+      ...(L.knafnet_mm && L.knafnet_mm.levin_real ? [["K-NAFNet (1 data step)", L.knafnet, L.knafnet.sun, L.knafnet.sun_circular],
+        ["  + both", L.knafnet_mm, L.knafnet_mm.sun, L.knafnet_mm.sun_circular]] : [])];
+    const hasKm = rows.length > 5;
     text(s, "2×2 ablation of mismatch-aware training (half of the batches): PSNR in dB", { x: 0.6, y: 1.35, w: 12.1, h: 0.4, fontSize: 14, bold: true });
-    s.addTable([hdr(["USRNet trained with", "Grid P1", "Grid extrap", "Levin real", "Levin, 2 largest", "Sun", "Sun circular"]),
+    s.addTable([hdr([hasKm ? "Model, training" : "USRNet trained with", "Grid P1", "Grid extrap", "Levin real", "Levin, 2 largest", "Sun", "Sun circular"]),
       ...rows.map(([name, g, sun, sc], i) => [cell(name, { bold: true }), cell(g.P1), cell(g.P2_extrap), cell(g.levin_real.all),
         cell(g.levin_real.big2, { bold: i > 0, color: name.includes("boundar") || name.includes("66k") ? M2 : C.text1 }), cell(sun), cell(sc)]),
       [cell("EPLL / FISTA (classical)", { color: C.text2 }), cell("–"), cell("–"),
         cell(`${f2(BM.epll.levin_real)} / ${f2(BM.fista.levin_real)}`, { color: C.text2 }), cell("–"),
         cell(`${f2(BM.epll.sun)} / ${f2(BM.fista.sun)}`, { color: C.text2 }),
         cell(`${f2(BM.epll.sun_circular)} / ${f2(BM.fista.sun_circular)}`, { color: C.text2 })]],
-      { x: 0.6, y: 1.85, w: 12.1, colW: [2.6, 1.25, 1.35, 1.6, 2.3, 1.4, 1.6], rowH: has66 ? 0.46 : 0.55, ...TABLE });
+      { x: 0.6, y: 1.85, w: 12.1, colW: [2.6, 1.25, 1.35, 1.6, 2.3, 1.4, 1.6], rowH: hasKm ? 0.38 : has66 ? 0.46 : 0.55, ...TABLE });
     const lengthNote = has66
       ? `Stopped at the same 66k iterations as the other runs, boundaries still give ${f2(L.usrnet_mm_boundary66k.levin_real.big2)} dB on the largest kernels: the gain is not extra training`
       : "Caveat: early stopping let the boundary run train longer (120k vs 66k iterations)";
@@ -1134,7 +1145,8 @@ async function build() {
       `Realistic boundaries alone fix the collapse on Levin's largest kernels (${f2(L.usrnet_full.levin_real.big2)} → ${f2(L.usrnet_mm_boundary.levin_real.big2)} dB) at no cost on the grid`,
       "Kernel noise adds a smaller gain and costs ~0.1 dB in distribution; both together give the best Levin real score",
       `Sun gains equally with circular blur, so its gap to EPLL is not about boundaries (Sun is itself synthetic). ${lengthNote}`,
-    ], { x: 0.6, y: has66 ? 5.45 : 5.35, w: 12.1, h: 1.5, fontSize: 13, color: C.text2 });
+      ...(hasKm ? [`K-NAFNet + both: +${f2(L.knafnet_mm.levin_real.all - L.knafnet.levin_real.all)} dB on Levin, still ${f2(L.usrnet_mm_boundary.levin_real.all - L.knafnet_mm.levin_real.all)} below boundary USRNet; ${f2(BM.epll.sun - L.knafnet_mm.sun)} dB below EPLL on Sun (1 seed)`] : []),
+    ], { x: 0.6, y: hasKm ? 5.45 : has66 ? 5.45 : 5.35, w: 12.1, h: hasKm ? 1.25 : 1.5, fontSize: hasKm ? 11.5 : 13, color: C.text2 });
   }
   s.addNotes("Nan and Ji (CVPR 2020) already train with kernel noise and edge-tapering together. Our ablation separates them: " +
     "simulating realistic image boundaries is what fixes real captures with large kernels, and it costs nothing in distribution. " +
@@ -1200,7 +1212,7 @@ async function build() {
     const ext = (m) => R3(m).P2_extrap;
     const claims = [
       [fa.FaColumns, "Physics transfers, data alone does not", `Data-only nets tie classical solvers on training kernels and lose on unseen ones; USRNet is best on the synthetic grid (${f2(R3("usrnet_full").P1)} / ${f2(R3("usrnet_full").P2_extrap)} dB), not on real photos without boundary-aware training`, M2],
-      [fa.FaLayerGroup, "Placement, not presence, of the kernel", `Input maps ${f2(ext("nafnet_concat") - ext("nafnet"))} dB and FiLM ${f2(ext("nafnet_film") - ext("nafnet"))} dB on unseen families; one data step +${f2(ext("knafnet") - ext("nafnet"))}; unrolling +${f2(ext("nafnet_unrolled") - ext("nafnet"))}, ${uTie ? "tied with USRNet" : `${f2(-uGap)} dB short of USRNet`}`, M3],
+      [fa.FaLayerGroup, "Placement, not presence, of the kernel", `Input maps ${f2(ext("nafnet_concat") - ext("nafnet"))} dB and FiLM ${f2(ext("nafnet_film") - ext("nafnet"))} dB on unseen families; ${L.nafnet_dc ? `one data step alone +${f2(L.nafnet_dc.P2_extrap - ext("nafnet"))}, with FiLM +${f2(ext("knafnet") - ext("nafnet"))}` : `one data step +${f2(ext("knafnet") - ext("nafnet"))}`}; unrolling +${f2(ext("nafnet_unrolled") - ext("nafnet"))}, ${uTie ? "tied with USRNet" : `${f2(-uGap)} dB short of USRNet`}`, M3],
       [fa.FaSearch, "Mechanism: a lookup key vs. a forward model", "Conditioned nets can score higher with a wrong kernel; through a data step the true kernel is worth +3 to +7 dB, like Wiener", AMBER],
       [fa.FaLightbulb, "For real captures, simulate realistic boundaries", "Boundary-aware training fixes Levin's largest kernels at no grid cost (known in spirit: Nan & Ji 2020)", M1],
     ];
@@ -1222,6 +1234,7 @@ async function build() {
       "Our own reimplementations, trained on grayscale BSDS500 (200 images); no official pretrained weights",
       LU.kunet ? "Two backbones (NAFNet, U-Net); the U-Net ladder has one seed per variant" : "One backbone for the placement ladder (NAFNet)",
       `Seeds: ${nSeeds("nafnet_concat")} for input maps, ${nSeeds("nafnet_film")} for FiLM, ${nSeeds("knafnet")} for K-NAFNet, ${nSeeds("nafnet_unrolled")} for the unrolled net`,
+      ...(L.nafnet_dc ? ["One seed for the data-step-only rung and K-NAFNet + mismatch; the unrolled net keeps FiLM, which may cost it part of its gap to USRNet"] : []),
       "Spectral loss and kernel size are correlated over only 12 unseen kernels",
       "Non-blind only: the true kernel is given; H3 uses a transfer attack, not a white-box attack on M2",
     ];
