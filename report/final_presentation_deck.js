@@ -1010,7 +1010,7 @@ async function build() {
     "buys about 0.6 dB on training families and costs 1.2 and several dB on unseen families: worse than no kernel at all. " +
     "A single FFT data step turns the kernel into a help; four unrolled stages close almost all of the gap to USRNet on unseen families " +
     (uTie ? "and tie with it, so USRNet's advantage is the placement, not its particular architecture. "
-      : `(${f2(uGap)} dB, significant over 200 images), so the placement carries most of the gain; the two unrolled seeds differ by ${f2(SD.nafnet_unrolled ? SD.nafnet_unrolled.std.P2_extrap * Math.SQRT2 : 0)} dB on unseen families. `) +
+      : `(${f2(uGap)} dB, significant over 200 images), so the placement carries most of the gain; the unrolled seeds' standard deviation on unseen families is ${f2(SD.nafnet_unrolled ? SD.nafnet_unrolled.std.P2_extrap : 0)} dB; the seed that stopped early generalised best. `) +
     "Errors are standard deviations over training seeds; tests pair test images.");
 
   // P3-2b: U-Net ladder (only once the second-backbone runs exist)
