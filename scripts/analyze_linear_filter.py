@@ -42,9 +42,34 @@ evaluate_main = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(evaluate_main)
 
 
-def r2(outputs: np.ndarray, fitted: np.ndarray) -> float:
-    centred = outputs - outputs.mean(axis=(-2, -1), keepdims=True)
-    return float(1 - np.sum(np.abs(outputs - fitted) ** 2) / np.sum(np.abs(centred) ** 2))
+def fit_and_score(Y: np.ndarray, O: np.ndarray, labels: list[tuple[str, str]]) -> dict:
+    """Shared and per-kernel least-squares filters and their R^2, overall and per set.
+
+    Streams over observations so memory stays at Y and O (complex64) plus a few
+    (H, W) accumulators; sums are taken in float64/complex128.
+    """
+    def filt(idx):
+        num = np.zeros(Y.shape[1:], np.complex128)
+        den = np.zeros(Y.shape[1:], np.float64)
+        for i in idx:
+            num += np.conj(Y[i]) * O[i]
+            den += np.abs(Y[i]) ** 2
+        return num / den
+
+    shared = filt(range(len(Y)))
+    per_kernel = {k: filt([i for i, (_, n) in enumerate(labels) if n == k]) for k in sorted({n for _, n in labels})}
+    sums = {}  # group -> [shared residual, per-kernel residual, centred total]
+    for i, (set_name, name) in enumerate(labels):
+        o = O[i].astype(np.complex128)
+        y = Y[i].astype(np.complex128)
+        terms = (np.sum(np.abs(o - shared * y) ** 2), np.sum(np.abs(o - per_kernel[name] * y) ** 2),
+                 np.sum(np.abs(o - o.mean()) ** 2))
+        for g in ("all", set_name):
+            acc = sums.setdefault(g, [0.0, 0.0, 0.0])
+            for j in range(3):
+                acc[j] += float(terms[j])
+    score = {g: {"shared_r2": 1 - a[0] / a[2], "per_kernel_r2": 1 - a[1] / a[2]} for g, a in sums.items()}
+    return score
 
 
 def main() -> None:
@@ -79,33 +104,23 @@ def main() -> None:
         images.append((path.stem, img[(h - c) // 2:(h - c) // 2 + c, (w - c) // 2:(w - c) // 2 + c]))
     sigma = args.sigma_255 / 255.0
 
-    Y, O, labels = [], [], []
+    n = sum(len(p) for p in sets.values()) * len(images)
+    Y = np.empty((n, c, c), np.complex64)
+    O = np.empty((n, c, c), np.complex64)
+    labels = []
     for set_name, psfs in sets.items():
         for psf in psfs:
             for image_id, x in images:
                 y = observe(x, psf.kernel, sigma, seed=config.seed, image_id=image_id, psf_name=psf.name,
                             quantize=True)
                 out = restore_fn(y, psf, sigma)
-                Y.append(np.fft.fft2(y))
-                O.append(np.fft.fft2(out) - np.fft.fft2(y))  # the correction D = O - Y
+                Y[len(labels)] = np.fft.fft2(y)
+                O[len(labels)] = np.fft.fft2(out) - np.fft.fft2(y)  # the correction D = O - Y
                 labels.append((set_name, psf.name))
-    Y, O = np.stack(Y), np.stack(O)
 
-    shared = (np.conj(Y) * O).sum(0) / (np.abs(Y) ** 2).sum(0)
-    fitted_shared = shared[None] * Y
-    fitted_kernel = np.empty_like(O)
-    names = [n for _, n in labels]
-    for name in sorted(set(names)):
-        idx = [i for i, n in enumerate(names) if n == name]
-        h = (np.conj(Y[idx]) * O[idx]).sum(0) / (np.abs(Y[idx]) ** 2).sum(0)
-        fitted_kernel[idx] = h[None] * Y[idx]
-
+    score = fit_and_score(Y, O, labels)
     result = {"method": meta, "images": len(images), "crop": c, "sigma_255": args.sigma_255,
-              "shared_r2": r2(O, fitted_shared), "per_kernel_r2": r2(O, fitted_kernel), "by_set": {}}
-    for set_name in sets:
-        idx = [i for i, (s, _) in enumerate(labels) if s == set_name]
-        result["by_set"][set_name] = {"shared_r2": r2(O[idx], fitted_shared[idx]),
-                                      "per_kernel_r2": r2(O[idx], fitted_kernel[idx])}
+              **score.pop("all"), "by_set": {s: score[s] for s in sets}}
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=1, default=str))
