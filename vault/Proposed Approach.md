@@ -1,7 +1,7 @@
 ---
 title: Proposed Approach — Three-Arm Comparison
 date: 2026-10-19
-updated: 2026-11-15
+updated: 2026-11-28
 tags:
   - project
   - deblurring
@@ -13,7 +13,7 @@ aliases:
   - Method Design
   - Three-Arm Study
   - Method Inventory
-status: active
+status: complete
 ---
 
 # Proposed Approach — Three-Arm Comparison
@@ -21,8 +21,14 @@ status: active
 > [!abstract] Summary
 > Three **established** methods, one controlled protocol: **M1** (data-only CNN), **M2** (physics-aware classical-ML solver), **M3** (physics-aware unrolled network, the control). No new architecture in the core study — the comparison itself is the contribution, and its failure signature motivates the follow-up method.
 
-> [!todo] Phase 2 and Phase 3 (after the mid-evaluation)
-> In response to the reviewer, Phase 2 adds a synthetic training-image pipeline shared by all arms and a wider kernel library (protocol v2), and trains M3. Sections 0–11 describe the **v1** protocol used for the mid-evaluation results; the v2 changes are specified in **§12**; their code is implemented and the runs are pending ([[Phase 2 Run Checklist]]). Phase 3, the method proposal (K-NAFNet), is **§12.9** and is also not implemented.
+> [!success] Outcome (2026-11-28): all three phases have been run
+> This document is the design record and is kept as written; the results are in `report/final_report.pdf` and `report/final_presentation.pptx`. Sections 0–11 describe the **v1** protocol used for the mid-evaluation (Phase 1); §12 is the Phase 2 plan and §12.9 the Phase 3 proposal.
+>
+> **What was run.** Phase 1: M1 (NAFNet, U-Net) vs. M2 (Wiener, R–L, FISTA-TV, ADMM-EPLL) on v1, with the σ-oracle, K-sweep, H2, H3 (transfer attack) and LPIPS. Phase 2: the real-data learning curve, M3 (USRNet, ISTA-Net, LISTA) on v1 and v2, protocol v2 with four training and three unseen families (defocus, ring, ghost), the 2C-5 coverage ablation, 3 seeds for v2 NAFNet and USRNet, and real blur (Levin kernels, Levin real captures, Sun et al.). Phase 3 ([[Phase 3 Pre-registration]]): instead of K-NAFNet alone, a placement ladder on one NAFNet backbone (no kernel, input maps, FiLM, FiLM + one FFT data step = K-NAFNet, the data step without FiLM, 4-stage unrolled; 3 seeds each) repeated on U-Net (1 seed), a kernel-swap probe, spectral-loss and linear-filter analyses, and a 2×2 mismatch-aware training ablation.
+>
+> **What held.** Physics-awareness is what transfers: on v1 ADMM-EPLL wins every unseen-kernel cell (by up to 6.4 dB) while NAFNet loses half its gain, and USRNet keeps the small $P_2$ drop of the classical solver (−0.43 vs. −0.41 dB; NAFNet −2.76). Unrolling with a generic prior comes close to USRNet on unseen families (27.14 ± 0.38 vs. 27.57 ± 0.06 dB). Mismatch-aware training lifts USRNet on Levin real captures (33.70 vs. 29.56 dB) at a ≤ 0.2 dB grid cost.
+>
+> **What failed.** More training data does not help NAFNet (the learning curve is flat), so `syn-v1` was never generated (§12.2). H2 and the noise part of H1 are not supported; the texture part of H1 is weak (in distribution only). The K-NAFNet design of §12.9 did not remove the unseen-family drop: 23.45 ± 0.41 dB vs. 21.97 ± 0.18 without a kernel, while the same data step **without FiLM** reaches 25.05 ± 0.05; input maps (20.78) and FiLM (17.23) are worse than no kernel. On circular Sun EPLL still beats USRNet (32.55 vs. 31.78 dB), and NAFNet is not a single fixed filter (shared R² 0.13 vs. per-kernel 0.77). Not run: DeepDeblur, K-SVD, GoPro, a white-box H3 attack on M2 in the reported results.
 
 Related: [[Project Overview]] · Proposal PDF: `proposal.pdf`
 
@@ -37,7 +43,7 @@ Related: [[Project Overview]] · Proposal PDF: `proposal.pdf`
 |---|---|
 | Forward model | $y = Ax + \varepsilon$, $\varepsilon \sim \mathcal{N}(0,\sigma^2)$ |
 | Operator | $A$ = circular convolution with PSF $k$; diagonalized by FFT: $A = \mathcal{F}^{-1}\mathrm{diag}(\kappa)\mathcal{F}$, $\kappa = \mathcal{F}k$ |
-| PSF library | **v1:** Gaussian $\sigma_k \in \{0.7, 1.2, 1.6, 2.0\}$; procedural linear motion kernels; defocus disks. **v2 (planned, §12.3):** 7 families incl. anisotropic Gaussian, random-trajectory camera shake, real recorded kernels, Airy/Moffat |
+| PSF library | **v1:** Gaussian $\sigma_k \in \{0.7, 1.2, 1.6, 2.0\}$; procedural linear motion kernels; defocus disks. **v2 (§12.3; as run: four training and three unseen families, see the outcome note):** 7 families incl. anisotropic Gaussian, random-trajectory camera shake, real recorded kernels, Airy/Moffat |
 | Noise grid | $\sigma \in \{0, 1, 5, 15, 25\}/255$ |
 | Data | BSDS500 splits (200 train / 100 val / 200 test), 128×128 patches, circular boundary. **v2 (planned, §12.2):** training pool = 200 real + ~2,000 synthetic images (`syn-v1`), identical for every arm; val/test stay real |
 | Metrics | PSNR, SSIM, LPIPS, data-consistency residual $\lVert A\hat{x}-y\rVert_2$, kernel-mismatch PSNR drop, PGD stability |
@@ -293,7 +299,7 @@ Evaluation artifacts land in `artifacts/eval/` (CSV, summary JSON, metadata JSON
 - **H3 — A-awareness buys stability.** M1 is unstable under tiny perturbations while the physics-aware arms resist them (Antun et al., PNAS 2020; tested here in the convolution regime). This is the study's headline result.
 
 > [!note] H3 implementation
-> See §6.1. The current script runs a **transfer attack**; a per-method white-box M2 attack is a follow-up.
+> See §6.1. The current script runs a **transfer attack**; a per-method white-box M2 attack was added in Phase 2 (2C-7, `--attack-arm m2`; see the final report).
 
 > [!note] Phase 2 hypotheses
 > Two hypotheses are added for Phase 2 (§12.4): **H4 (data)**, that more training images help the deep arms in distribution but not under kernel mismatch, and **H5 (kernel diversity)**, that more training kernel families narrow M1's gap on unseen parameters but not on unseen families.
@@ -408,12 +414,12 @@ membership, sampling policy, checkpoint rule, and learned-arm hyperparameters.
 | 3 | `metrics/` (PSNR, SSIM, consistency) | ✅ implemented + tested; LPIPS optional |
 | 4–6 | classical arm (`wiener`, `richardson_lucy`, `fista_tv`, `admm_epll`, `gmm`) | ✅ implemented + tested |
 | 7 | direct arm (`direct/nafnet.py`, `direct/unet.py`, `training/`, `scripts/train_m1.py`, `scripts/eval_m1.py`) | ✅ implemented + tested; M1/M2 complete comparison in `report/study_report.md` |
-| 8 | unrolled arm (`unrolled/usrnet.py`, `unrolled/ista_net.py`, `unrolled/lista.py`, `scripts/train_m3.py`) | ✅ implemented + tested (torch-guarded); training pending |
+| 8 | unrolled arm (`unrolled/usrnet.py`, `unrolled/ista_net.py`, `unrolled/lista.py`, `scripts/train_m3.py`) | ✅ implemented + tested (torch-guarded); trained and evaluated in Phase 2 |
 | 9 | unified evaluation (`evaluation/`, `scripts/evaluate.py`) with paired per-cell baseline | ✅ implemented + tested |
-| 10 | consolidated report (`report/study_report.md`, `report/generated/`) | ✅ M1/M2 + H2/H3/LPIPS results; M3 pending |
+| 10 | consolidated report (`report/study_report.md`, `report/generated/`) | ✅ M1/M2 + H2/H3/LPIPS results (Phase 1 report); final results in `report/final_report.pdf` |
 | H3 | stability (`metrics/stability.py`, `scripts/stability_test.py`) | ✅ implemented + run (transfer, 10 images); report §7 |
 | Overfit check | `scripts/analyze_overfit.py`, `report/nafnet_overfitting.pdf` | ✅ run: no image memorisation; kernel-distribution overfitting |
-| Phase 2 | M3 fixes, synthetic pipeline, kernel library v2, mixture sampler, batched and differentiable M2 solvers (§12.6) | ✅ implemented + tested; runs pending ([[Phase 2 Run Checklist]]) |
+| Phase 2 | M3 fixes, synthetic pipeline, kernel library v2, mixture sampler, batched and differentiable M2 solvers (§12.6) | ✅ implemented + tested; run ([[Phase 2 Run Checklist]]); synthetic pipeline unused (gate closed) |
 
 ---
 
@@ -520,7 +526,7 @@ no-restoration baseline.
 ## 12. Phase 2 plan and Phase 3 proposal (after the mid-evaluation)
 
 > [!abstract] Summary
-> The mid-evaluation reviewer raised two points: **(R1)** M1 may be data-hungry or overfit, and **(R2)** three kernel families are too few. Phase 2 answers both without breaking the controlled comparison. **(1)** A synthetic training-image pipeline (pretrained latent diffusion), used identically by every learned component of every arm. **(2)** Protocol **v2** with a wider kernel library, including real recorded camera-shake kernels. Validation and test stay real BSDS500 images. The v1 results reported at the mid-evaluation are frozen and remain the reference point. **Status: code implemented and tested (2026-11-15); runs pending, see [[Phase 2 Run Checklist]].**
+> The mid-evaluation reviewer raised two points: **(R1)** M1 may be data-hungry or overfit, and **(R2)** three kernel families are too few. Phase 2 answers both without breaking the controlled comparison. **(1)** A synthetic training-image pipeline (pretrained latent diffusion), used identically by every learned component of every arm. **(2)** Protocol **v2** with a wider kernel library, including real recorded camera-shake kernels. Validation and test stay real BSDS500 images. The v1 results reported at the mid-evaluation are frozen and remain the reference point. **Status: done; see [[Phase 2 Run Checklist]] and the outcome note at the top.**
 
 > [!important] Alignment with the project goal
 > Phase 2 is **not** the proposed method. Its job is to **finish and stress-test the three-arm comparison**: train M3, test data hunger, widen kernel coverage, and fix the σ = 0 protocol. The method proposal is **Phase 3 (§12.9)**, designed from the v1 diagnosis in §8 and the Phase 1/2 results.
@@ -668,9 +674,9 @@ Real recorded camera shake (Levin, Sun, Köhler) can still be added to $P_2$-ext
 
 The v2 evaluation grid is the cost driver: without batching the M2 solvers it would be about 55 GPU-h for FISTA-TV alone. Batching the torch solvers across cells is therefore part of the implementation work.
 
-### 12.6 Implementation (code complete, 2026-11-15; runs pending)
+### 12.6 Implementation (code complete, 2026-11-15; since run)
 
-All Phase 2 code below is implemented, unit-tested (153 tests) and smoke-tested on the GPU. What remains is running it: see **[[Phase 2 Run Checklist]]** for every run, its command and its measured time.
+All Phase 2 code below is implemented, unit-tested (153 tests) and smoke-tested on the GPU. It has since been run: see **[[Phase 2 Run Checklist]]** for every run, its command and its measured time.
 
 | Area | Implemented in |
 |---|---|
@@ -716,7 +722,7 @@ All Phase 2 code below is implemented, unit-tested (153 tests) and smoke-tested 
 ### 12.9 Phase 3: from diagnosis to a proposed method (K-NAFNet)
 
 > [!abstract] Summary
-> Phase 2 finishes and stress-tests the three-arm comparison. Phase 3 uses that diagnosis to propose **one** better method. The diagnosis is specific: **M1 has a deep prior but is kernel-blind; M2 has the right physics but a shallow prior; M3 is designed to have both but pays for unrolling.** The proposal is **K-NAFNet**: the same NAFNet backbone, conditioned on the known kernel and noise level through a small kernel encoder and FiLM modulation, followed by one closed-form FFT data-consistency step. It is designed to keep M1's in-distribution accuracy, borrow M2's mismatch robustness, and cost one forward pass plus one FFT solve. **Status: proposed, not implemented; it starts only after Phase 2 produces the v2 results.**
+> Phase 2 finishes and stress-tests the three-arm comparison. Phase 3 uses that diagnosis to propose **one** better method. The diagnosis is specific: **M1 has a deep prior but is kernel-blind; M2 has the right physics but a shallow prior; M3 is designed to have both but pays for unrolling.** The proposal is **K-NAFNet**: the same NAFNet backbone, conditioned on the known kernel and noise level through a small kernel encoder and FiLM modulation, followed by one closed-form FFT data-consistency step. It is designed to keep M1's in-distribution accuracy, borrow M2's mismatch robustness, and cost one forward pass plus one FFT solve. **Status: run in Phase 3 as one rung of the placement ladder ([[Phase 3 Pre-registration]]); its unseen-family target failed, see the outcome note at the top.**
 
 #### 12.9.1 What the diagnosis requires
 
@@ -869,4 +875,4 @@ The patch-GMM-routed and GSM-scale ideas in §8–§9 remain the "mixture prior"
 
 ---
 
-Status: active — implementation reference for the three-arm study. [[Project Overview]] gives the summary; this document is the full method record.
+Status: complete — design record for the three-arm study (results in `report/final_report.pdf`). [[Project Overview]] gives the summary; this document is the full method record.

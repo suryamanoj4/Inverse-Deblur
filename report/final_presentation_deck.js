@@ -754,9 +754,9 @@ async function build() {
     valAxisTitle: "PSNR drop (dB), P2-interp, ε = 1% of ‖y‖", showTitle: false, ...CHART_TEXT,
   });
   const h3cards = [
-    ["2–17× smaller", "drop for ADMM-EPLL at σ ≥ 5/255, in 99–100% of cells", M2],
+    ["2–17× smaller", "drop for ADMM-EPLL at σ ≥ 5/255 under NAFNet's attack, in 99–100% of cells", M2],
     ["σ = 1: not stable", "perturbation ≈ noise; weakly regularised EPLL amplifies it (holds on P1, reverses on P2)", M1],
-    ["Transfer attack", "η is NAFNet's worst case, not EPLL's: a white-box M2 attack is remaining work", HEX.dk2],
+    ["White-box: ~2×", "Attacked through its own solver (10 images, P1), EPLL drops 4.4 dB at σ = 5 vs NAFNet's 8.6", HEX.dk2],
   ];
   for (let i = 0; i < 3; i++) {
     const y = 1.5 + i * 1.75;
@@ -767,7 +767,10 @@ async function build() {
   }
   s.addNotes("We optimise a small perturbation to break NAFNet, then give the same perturbed image to ADMM-EPLL. " +
     "From sigma 5 up, the solver barely notices it. At sigma 1 the perturbation is as large as the noise, and the solver, tuned for " +
-    "almost no regularisation, amplifies it. Because the attack targets NAFNet, this is not a worst case for M2.");
+    "almost no regularisation, amplifies it. Because the attack targets NAFNet, this is not a worst case for M2. A small white-box " +
+    "check attacks M2 through a reduced-iteration copy of its own solver (10 images, 6 training kernels, sigma 5 and 15, 1% budget): " +
+    "ADMM-EPLL drops 4.39 / 1.29 dB and FISTA-TV 2.29 / 1.05, against 8.55 / 3.46 for NAFNet under its own attack (same 10 images, all P1 kernels). " +
+    "M2 stays more stable, but by about 2 to 4 times, not up to 17.");
 
   // 14. H2 + LPIPS ---------------------------------------------------------
   s = content("Two surprises: texture (H2) and perceptual quality", "Phase 1 results");
@@ -841,7 +844,7 @@ async function build() {
     ["H1", "Gap grows with noise", "Not supported", "M2's advantage shrinks as noise grows", M1],
     ["H1", "Gap grows with texture", "Weak", "in distribution only", AMBER],
     ["H2", "Deep prior wins on texture", "Not supported", "NAFNet's lead comes from smooth images", M1],
-    ["H3", "Physics-aware arm resists perturbations", "Supported at σ ≥ 5", "2–17× smaller drop; weak or reversed at σ = 1", HEX.accent6],
+    ["H3", "Physics-aware arm resists perturbations", "Supported at σ ≥ 5", "2–17× smaller drop (~2× white-box); reversed at σ = 1", HEX.accent6],
   ];
   for (let i = 0; i < score.length; i++) {
     const y = 1.5 + i * 0.98;
@@ -876,7 +879,7 @@ async function build() {
     const stat = [
       [`${f2(spread)} dB`, "P1 spread across 50, 100 and 200 images: 4× the data changes nothing", M1],
       [`${f2(pm.nafnet.p2_drop)} dB`, `P2 drop at 200 images; ${f2(pm.nafnet_real50.p2_drop)} at 50. Mismatch, not data`, M1],
-      ["Gate: closed", "Flat curve: synthetic data not justified (DIV2K control pending)", AMBER],
+      ["Gate: closed", "Flat curve; + 800 DIV2K images: P1 +0.02 dB, drop −2.87: more data does not help", AMBER],
     ];
     for (let i = 0; i < 3; i++) {
       const y = 1.5 + i * 1.75;
@@ -887,7 +890,7 @@ async function build() {
   }
   s.addNotes("The reviewer suggested NAFNet was data-hungry. We retrained it on nested subsets of 50 and 100 of the 200 training images, " +
     "same protocol and iterations. Test PSNR moves by less than 0.1 dB on the training kernels and the unseen-kernel drop is the same. " +
-    "More data of the same kind does not help, so the go/no-go gate for generating synthetic images is closed; the DIV2K control run will confirm it.");
+    "More data of the same kind does not help, so the go/no-go gate for generating synthetic images is closed. The DIV2K control (200 BSDS + 800 DIV2K images, half the batches each) confirms it: +0.02 dB on the training kernels and an unseen-kernel drop of −2.87 dB, against −2.76 for BSDS only.");
 
   // 15c. Phase 2: M3 --------------------------------------------------------
   s = content("USRNet (M3): best accuracy, M2's robustness", "Phase 2 results");
@@ -967,7 +970,8 @@ async function build() {
   }
   s.addNotes("Phase 2 diagnosed two failures: data-only networks do not transfer to unseen kernel families, and USRNet loses to " +
     "EPLL on provided real blur. Phase 3 tries to explain and fix them. We wrote the predictions down first; three of five failed " +
-    "and are reported as failed. The ones that matter for the main claim hold.");
+    "and are reported as failed. The ones that matter for the main claim hold. The linear-filter test repeated on 50 images gives " +
+    "shared R² 0.12 and per-kernel 0.74 for NAFNet, the same conclusion.");
 
   // P3-2: placement ladder
   s = content("Where the kernel enters, not whether it does", "Phase 3 results");
@@ -1042,7 +1046,7 @@ async function build() {
     });
     const kuFilm = LU.kunet.P2_extrap - LU.unet_film.P2_extrap;
     const pk = holmP("kunet - unet / P2_extrap");
-    const worth = (m) => PR[m] ? PR[m]["P2_extrap/true"] - PR[m]["P2_extrap/delta"] : null;
+    const worth = (m) => PR[m] ? PR[m]["P2_extrap/true"] - Math.max(...["nearest", "random", "delta"].map((c) => PR[m][`P2_extrap/${c}`])) : null;
     text(s, same ? "Every rung moves in the same direction on both backbones: the effect is not specific to NAFNet."
       : `Conditioning hurts on both backbones. The data step beats FiLM by +${f2(kuFilm)} dB, but on U-Net one step only gets back to no kernel (${pText(pk)}).`,
       { x: 7.75, y: 4.15, w: 4.95, h: 1.4, fontSize: 14, bold: true, color: same ? M2 : M1 });
@@ -1079,7 +1083,7 @@ async function build() {
       "In distribution the same nets lose ~8 dB with a random kernel: they rely on it as a key",
       "Through a data step the true kernel is worth +3 to +7 dB, like Wiener",
     ], { x: 9.35, y: 2.45, w: 3.15, h: 3.5, fontSize: 13, color: C.text2 });
-    text(s, "Worth of the true kernel = true − best wrong kernel (nearest, random or delta). 50 test images × 12 unseen kernels × σ ∈ {1, 5, 15, 25}.",
+    text(s, "Worth of the true kernel = true − best wrong kernel (nearest, random or delta). 50 test images × 12 unseen kernels × σ ∈ {1, 5, 15, 25}; repeated on 100 images, every worth moves ≤ 0.08 dB.",
       { x: 0.6, y: 6.55, w: 12.1, h: 0.35, fontSize: 11, color: C.text2 });
   }
   s.addNotes("The observations are always made with the true kernel; only the kernel we tell the method changes. Wiener behaves like " +
@@ -1104,14 +1108,14 @@ async function build() {
     });
     const rho = spectral.spearman_gain_vs_loss;
     s.addTable([hdr(["Method", "Spearman ρ", "p"]),
-      ...[["Input maps", "nafnet_concat"], ["FiLM", "nafnet_film"], ["K-NAFNet", "knafnet"], ["Unrolled", "nafnet_unrolled"], ["USRNet", "usrnet_full"]]
+      ...[["Input maps", "nafnet_concat"], ["FiLM", "nafnet_film"], ["Data step only", "nafnet_dc"], ["K-NAFNet", "knafnet"], ["Unrolled", "nafnet_unrolled"], ["USRNet", "usrnet_full"]]
         .map(([name, m]) => [cell(name, { bold: true }), cell(rho[m].rho.toFixed(2), { align: "center" }),
           cell(rho[m].p < 1e-3 ? rho[m].p.toExponential(0) : rho[m].p.toFixed(2), { align: "center", color: C.text2 })])],
-      { x: 8.55, y: 1.85, w: 4.15, colW: [1.75, 1.2, 1.2], rowH: 0.45, ...TABLE });
+      { x: 8.55, y: 1.85, w: 4.15, colW: [1.75, 1.2, 1.2], rowH: 0.4, ...TABLE });
     text(s, "Ghosts destroy almost nothing and gain most; wide defocus and rings zero out bands that no kernel can bring back.",
-      { x: 8.55, y: 4.7, w: 4.15, h: 1.0, fontSize: 13, color: C.text2 });
+      { x: 8.55, y: 5.0, w: 4.15, h: 1.0, fontSize: 13, color: C.text2 });
     text(s, `Caveat: spectral loss also grows with kernel size (ρ = ${spectral.spearman_loss_vs_kernel_size.rho.toFixed(2)}); n = 12 kernels.`,
-      { x: 8.55, y: 5.75, w: 4.15, h: 0.8, fontSize: 12, color: C.text2 });
+      { x: 8.55, y: 5.95, w: 4.15, h: 0.7, fontSize: 12, color: C.text2 });
   }
   s.addNotes("This explains the size of the gain, kernel by kernel. Where the blur keeps most frequencies, for example ghosts, " +
     "a data step recovers 8 to 12 dB. Where the blur zeroes out frequency bands, the kernel cannot bring them back and every method " +
@@ -1233,10 +1237,10 @@ async function build() {
     const lim = [
       "Our own reimplementations, trained on grayscale BSDS500 (200 images); no official pretrained weights",
       LU.kunet ? "Two backbones (NAFNet, U-Net); the U-Net ladder has one seed per variant" : "One backbone for the placement ladder (NAFNet)",
-      `Seeds: ${nSeeds("nafnet_concat")} for input maps, ${nSeeds("nafnet_film")} for FiLM, ${nSeeds("knafnet")} for K-NAFNet, ${nSeeds("nafnet_unrolled")} for the unrolled net`,
-      ...(L.nafnet_dc ? [`${nSeeds("nafnet_dc") > 1 ? `${nSeeds("nafnet_dc")} seeds for the data-step-only rung, one for K-NAFNet + mismatch` : "One seed for the data-step-only rung and K-NAFNet + mismatch"}; the unrolled net keeps FiLM, which may cost it part of its gap to USRNet`] : []),
+      `${nSeeds("nafnet_dc")} seeds for every NAFNet rung; one for each U-Net variant and for K-NAFNet + mismatch`,
+      "The unrolled net keeps FiLM, which may cost it part of its gap to USRNet",
       "Spectral loss and kernel size are correlated over only 12 unseen kernels",
-      "Non-blind only: the true kernel is given; H3 uses a transfer attack, not a white-box attack on M2",
+      "Non-blind only: the true kernel is given; the white-box H3 check on M2 is small (10 images, σ = 5 and 15)",
     ];
     const fut = [
       "Blind deblurring: does an estimated kernel behave like the 'nearest' kernel in the probe?",
